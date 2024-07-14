@@ -1,23 +1,14 @@
 package net.liopyu.kotlinscript;
 
+import org.slf4j.Logger;
+
+import java.util.function.Consumer;
+import java.util.function.Function;
+
 public class TestClass {
-    public static void anyMethod() {
-        KotlinScriptInterpreter.LOGGER.info("anyMethod executed");
-    }
-
-    public static void printMessage(String message) {
-        KotlinScriptInterpreter.LOGGER.info("Message: " + message);
-    }
-
-    public void execute() {
-        KotlinScriptInterpreter.LOGGER.info("TestClass instance executed");
-    }
-
-    public void execute(int i) {
-        KotlinScriptInterpreter.LOGGER.info("TestClass instance executed: " + i);
-    }
-
-    public void execute(int i, int j) {
-        KotlinScriptInterpreter.LOGGER.info("TestClass instance executed: " + i + ", " + j);
+    public static Logger LOGGER = KotlinScriptInterpreter.LOGGER;
+    public void execute(Consumer<String> consumer) {
+        // Invoking the consumer with a specific string
+        consumer.accept("Test input from TestClass");
     }
 }

@@ -9,6 +9,9 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -97,6 +100,7 @@ public class KotlinScriptInterpreter {
         Class<?> clazz;
         boolean isStatic = false;
 
+        // Determine whether it's a static or instance method call
         if (target instanceof String) {
             // Static method call
             clazz = importedClasses.get(target);
@@ -113,32 +117,163 @@ public class KotlinScriptInterpreter {
             return;
         }
 
-        String methodName = methodCall.substring(0, methodCall.indexOf('(')).trim();
-        String argsString = methodCall.substring(methodCall.indexOf('(') + 1, methodCall.length() - 1).trim();
-        LOGGER.info("Method name: " + methodName + ", Args string: " + argsString);
-        Object[] args = parseArgs(argsString);
+        // Improved detection for method name and argument list
+        int methodNameEndIndex = methodCall.indexOf("(");
+        methodNameEndIndex = methodNameEndIndex == -1 ? methodCall.indexOf("{") : methodNameEndIndex;
+        if (methodNameEndIndex == -1) {
+            LOGGER.error("Invalid method call syntax: " + methodCall);
+            return;
+        }
 
-        try {
-            Method method = findMethod(clazz, methodName, args, isStatic);
-            if (method != null) {
-                LOGGER.info("Found method: " + method);
-                if (Modifier.isPublic(method.getModifiers())) {
-                    Object result = method.invoke(isStatic ? null : target, args);
-                    if (result != null) {
-                        LOGGER.info(result.toString());
-                    }
-                } else {
-                    LOGGER.error("Method not accessible: " + methodName);
-                }
-            } else {
-                LOGGER.error("Method not found: " + methodName);
-            }
-        } catch (Exception e) {
-            LOGGER.error("Error invoking method: " + methodName, e);
+        String methodName = methodCall.substring(0, methodNameEndIndex).trim();
+        String argsString = methodCall.substring(methodNameEndIndex).trim(); // Grabs everything after method name
+
+        // Handle different types of argument enclosures
+        int openIndex = argsString.startsWith("{") ? argsString.indexOf("{") : argsString.indexOf("(");
+        int closeIndex = argsString.startsWith("{") ? argsString.lastIndexOf("}") : argsString.lastIndexOf(")");
+        if (openIndex == -1 || closeIndex == -1 || openIndex > closeIndex) {
+            LOGGER.error("Invalid method call syntax: " + methodCall);
+            return;
+        }
+
+        argsString = argsString.substring(openIndex + 1, closeIndex).trim();
+        LOGGER.info("Method name: " + methodName + ", Args string: " + argsString);
+
+        // Determine if the arguments suggest a lambda or a consumer
+        if (argsString.contains("->")) {
+            LOGGER.info("Detected lambda expression in args");
+            handleLambdaExpression(clazz, methodName, argsString, isStatic, target);
+        } else if (argsString.contains("Consumer<")) {
+            LOGGER.info("Detected Consumer expression in args");
+            handleConsumerExpression(clazz, methodName, argsString, isStatic, target);
+        } else {
+            Object[] args = parseArgs(argsString);
+            executeMethod(clazz, methodName, args, isStatic, target);
         }
     }
 
+    private String extractArgsString(String methodCall) {
+        int start = methodCall.indexOf('{') != -1 ? methodCall.indexOf('{') : methodCall.indexOf('(');
+        int end = methodCall.lastIndexOf('}') != -1 ? methodCall.lastIndexOf('}') : methodCall.lastIndexOf(')');
+        return methodCall.substring(start + 1, end).trim();
+    }
+    private void handleConsumerExpression(Class<?> clazz, String methodName, String typeInfo, boolean isStatic, Object target) {
+        String typeName = typeInfo.substring(typeInfo.indexOf('<') + 1, typeInfo.indexOf('>')).trim();
+        try {
+            Class<?> typeClass = Class.forName(typeName);  // Ensure the class is available
+            Consumer<?> consumer = createConsumer(typeClass);
+            executeMethod(clazz, methodName, new Object[]{consumer}, isStatic, target);
+        } catch (ClassNotFoundException e) {
+            LOGGER.error("Type not found for Consumer: " + typeName, e);
+        }
+    }
 
+    private <T> Consumer<T> createConsumer(Class<T> typeClass) {
+        return input -> LOGGER.info("Consuming " + input + " of type " + typeClass.getSimpleName());
+    }
+
+
+    private Method findMethodForConsumer(Class<?> clazz, String methodName, Object[] args, boolean isStatic) {
+        for (Method method : clazz.getMethods()) {
+            if (method.getName().equals(methodName) && method.getParameterTypes().length == args.length && Modifier.isStatic(method.getModifiers()) == isStatic) {
+                if (Consumer.class.isAssignableFrom(method.getParameterTypes()[0])) {
+                    return method;
+                }
+            }
+        }
+        return null;
+    }
+
+    private void handleLambdaExpression(Class<?> clazz, String methodName, String lambdaExpression, boolean isStatic, Object target) {
+        LOGGER.info("Handling lambda expression: " + lambdaExpression);
+        // Convert the lambda expression to a functional interface
+        Object lambda = createLambdaFunction(lambdaExpression);
+        executeMethod(clazz, methodName, new Object[]{lambda}, isStatic, target);
+    }
+
+    private Object createLambdaFunction(String lambdaExpression) {
+        // Placeholder for lambda creation logic
+        return (Function<String, String>) s -> {
+            // Your lambda execution logic here
+            return "Lambda executed with input: " + s;
+        };
+    }
+
+    private void executeMethod(Class<?> clazz, String methodName, Object[] args, boolean isStatic, Object target) {
+        try {
+            LOGGER.debug("Attempting to find method: " + methodName);
+            Method method = findMethodForGenerics(clazz, methodName, args, isStatic);
+            if (method != null && Modifier.isPublic(method.getModifiers())) {
+                LOGGER.debug("Invoking method: " + methodName + " on class: " + clazz.getName());
+                Object result = method.invoke(isStatic ? null : target, args);
+                LOGGER.info("Method result: " + (result != null ? result.toString() : "void"));
+            } else {
+                LOGGER.error("Method not accessible or not found: " + methodName);
+            }
+        } catch (IllegalAccessException | IllegalArgumentException e) {
+            LOGGER.error("Error invoking method: " + methodName, e);
+        } catch (InvocationTargetException e) {
+            LOGGER.error("Error invoking method: " + methodName, e.getCause());
+            e.getCause().printStackTrace();
+        }
+    }
+
+    private Method findMethodForGenerics(Class<?> clazz, String methodName, Object[] args, boolean isStatic) {
+        for (Method method : clazz.getMethods()) {
+            if (method.getName().equals(methodName) && method.getParameterCount() == args.length && Modifier.isStatic(method.getModifiers()) == isStatic) {
+                if (areParameterTypesCompatible(method.getParameterTypes(), args)) {
+                    return method;
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean areParameterTypesCompatible(Class<?>[] parameterTypes, Object[] args) {
+        for (int i = 0; i < parameterTypes.length; i++) {
+            if (!parameterTypes[i].isInstance(args[i])) {
+                // Check for special cases like Consumer or other functional interfaces
+                if (Consumer.class.isAssignableFrom(parameterTypes[i]) && args[i] instanceof Consumer) {
+                    continue;
+                }
+                // More special cases (like Function, Supplier, etc.) can be added here
+                return false;
+            }
+        }
+        return true;
+    }
+
+
+
+    private Object handleFunction(String methodName, String argsString, Class<?> targetClass) {
+        try {
+            // Assume the first part before "(" in argsString specifies the function's input type
+            String functionType = argsString.substring(argsString.indexOf(":") + 1, argsString.indexOf("->")).trim();
+            Class<?> inputType = Class.forName("java.lang." + functionType);
+
+            // Dynamically determine the return type by inspecting further
+            String returnTypePart = argsString.substring(argsString.indexOf("->") + 2).trim();
+            Class<?> returnType = returnTypePart.startsWith("\"") ? String.class : Object.class;  // Simplified assumption
+
+            // Find the method with correct parameter types
+            Method method = targetClass.getMethod(methodName, Function.class);
+            Function<?, ?> function = createFunction(argsString, inputType, returnType);
+
+            return method.invoke(null, function);  // Assuming static for simplicity
+        } catch (Exception e) {
+            LOGGER.error("Failed to handle function: " + methodName, e);
+            return null;
+        }
+    }
+
+    private Function<?, ?> createFunction(String lambdaBody, Class<?> inputType, Class<?> returnType) {
+        // Parsing and dynamic function creation based on inputType and returnType
+        // This part is pseudocode and requires specific implementation
+        return input -> {
+            // Evaluate the lambda body with the given input
+            return evaluateExpression(lambdaBody.replace("$s", input.toString()));
+        };
+    }
 
 
     private Method findMethod(Class<?> clazz, String methodName, Object[] args, boolean isStatic) {
@@ -180,9 +315,6 @@ public class KotlinScriptInterpreter {
         }
         return false;
     }
-
-
-
     private Object[] parseArgs(String argsString) {
         LOGGER.info("Parsing args: " + argsString);
         if (argsString.isEmpty()) {
@@ -191,7 +323,15 @@ public class KotlinScriptInterpreter {
         String[] parts = argsString.split(",");
         Object[] args = new Object[parts.length];
         for (int i = 0; i < parts.length; i++) {
-            args[i] = evaluateExpression(parts[i].trim());
+            String arg = parts[i].trim();
+            if (arg.startsWith("{") && arg.endsWith("}")) {
+                // Treat as a Kotlin lambda
+                String lambdaExpression = arg.substring(1, arg.length() - 1).trim();
+                LOGGER.info("Parsed lambda expression: " + lambdaExpression);
+                args[i] = (Function<String, Object>) s -> evaluateExpression(lambdaExpression.replace("$s", s));
+            } else {
+                args[i] = evaluateExpression(arg);
+            }
             LOGGER.info("Parsed arg: " + args[i] + " of type: " + args[i].getClass().getName());
         }
         return args;
@@ -206,84 +346,235 @@ public class KotlinScriptInterpreter {
         LOGGER.info("Interpreting line: " + line);
 
         if (line.startsWith("import ")) {
-            String className = line.substring("import ".length()).trim();
-            LOGGER.info("Importing class: " + className);
-            importClass(className);
+            handleImport(line);
         } else if (line.contains(".")) {
-            String[] parts = line.split("\\.");
-            if (parts.length == 2) {
-                String classNameOrInstance = parts[0].trim();
-                String methodCall = parts[1].trim();
-                LOGGER.info("Class or instance: " + classNameOrInstance + ", Method call: " + methodCall);
-                if (classNameOrInstance.endsWith("()")) {
-                    // Instance creation and method call
-                    String className = classNameOrInstance.substring(0, classNameOrInstance.length() - 2).trim();
-                    LOGGER.info("Creating instance of class: " + className);
-                    Object instance = createInstance(className);
-                    if (instance != null) {
-                        invokeMethod(instance, methodCall);
-                    }
-                } else {
-                    // Static method call
-                    invokeMethod(classNameOrInstance, methodCall);
-                }
-            }
+            handleMethodCall(line);
         } else {
-            // Existing handling for other expressions
-            LOGGER.info("Handling other expression: " + line);
-            if (isInRepeatBlock) {
-                if (line.endsWith("}")) {
-                    handleRepeatEnd(line);
-                } else {
-                    repeatBlockContent.append(line).append("\n");
-                }
-                return;
-            }
+            handleOtherExpressions(line);
+        }
+    }
 
-            if (line.startsWith("//")) {
-                return; // Ignore comments
+    private void handleImport(String line) {
+        String className = line.substring("import ".length()).trim();
+        LOGGER.info("Importing class: " + className);
+        importClass(className);
+    }
+    private boolean inLambda = false;
+    private StringBuilder lambdaContent = new StringBuilder();
+
+    private void handleMethodCall(String line) {
+        if (line.contains("{") && !inLambda) {
+            inLambda = true;
+            lambdaContent.append(line).append("\n");
+            return;
+        }
+        if (inLambda) {
+            lambdaContent.append(line).append("\n");
+            if (line.contains("}")) {
+                inLambda = false;
+                executeLambda(lambdaContent.toString());
+                lambdaContent.setLength(0);  // Clear the content after processing
             }
-            if (line.startsWith("print(")) {
-                handlePrint(line);
-            } else if (line.startsWith("println(")) {
-                handlePrintln(line);
-            } else if (line.startsWith("readLine()")) {
-                handleReadLine();
-            } else if (line.startsWith("val ") || line.startsWith("var ")) {
-                defineVariable(line);
-            } else if (line.startsWith("listOf(") || line.startsWith("mutableListOf(") || line.startsWith("arrayListOf(")) {
-                handleList(line);
-            } else if (line.startsWith("setOf(") || line.startsWith("mutableSetOf(") || line.startsWith("hashSetOf(")) {
-                handleSet(line);
-            } else if (line.startsWith("mapOf(") || line.startsWith("mutableMapOf(") || line.startsWith("hashMapOf(")) {
-                handleMap(line);
-            } else if (line.startsWith("repeat(")) {
-                handleRepeatStart(line);
-            } else if (line.endsWith("}")) {
-                handleRepeatEnd(line);
-            } else if (line.startsWith("measureTimeMillis {")) {
-                handleMeasureTimeMillis(line);
-            } else if (line.startsWith("measureNanoTime {")) {
-                handleMeasureNanoTime(line);
-            } else if (line.startsWith("require(") || line.startsWith("check(") || line.startsWith("assert(")) {
-                handleRequireCheckAssert(line);
-            } else if (line.startsWith("executeClass(")) {
-                String[] parts = line.substring("executeClass(".length(), line.length() - 1).replace("\"", "").split(",");
-                loadAndExecuteClass(parts[0].trim(), parts[1].trim());
-            } else if (line.contains(".")) {
-                String[] parts = line.split("\\.");
-                if (parts.length == 2) {
-                    String instanceName = parts[0].trim();
-                    String methodCall = parts[1].trim();
-                    String methodName = methodCall.substring(0, methodCall.indexOf('(')).trim();
-                    String args = methodCall.substring(methodCall.indexOf('(') + 1, methodCall.length() - 1).trim();
-                    callInstanceMethod(instanceName, methodName, parseArgs(args));
-                }
+            return;
+        }
+        String[] parts = line.split("\\.");
+        if (parts.length == 2) {
+            String classNameOrInstance = parts[0].trim();
+            String methodCall = parts[1].trim();
+            LOGGER.info("Class or instance: " + classNameOrInstance + ", Method call: " + methodCall);
+            if (classNameOrInstance.endsWith("()")) {
+                handleInstanceMethodCall(classNameOrInstance, methodCall);
             } else {
-                evaluateExpression(line);
+                invokeMethod(classNameOrInstance, methodCall);  // Assuming static method call
             }
         }
     }
+    private void executeLambda(String lambdaCode) {
+        LOGGER.info("Executing lambda block: " + lambdaCode);
+
+        // Extract the method call part and the lambda part
+        int openParenIndex = lambdaCode.indexOf('{');
+        int closeParenIndex = lambdaCode.lastIndexOf('}');
+        if (openParenIndex == -1 || closeParenIndex == -1 || openParenIndex > closeParenIndex) {
+            LOGGER.error("Invalid lambda syntax: " + lambdaCode);
+            return;
+        }
+
+        String methodCallPart = lambdaCode.substring(0, openParenIndex).trim();
+        String lambdaPart = lambdaCode.substring(openParenIndex + 1, closeParenIndex).trim();
+
+        LOGGER.info("Method call part: " + methodCallPart);
+        LOGGER.info("Lambda part: " + lambdaPart);
+
+        // Parsing the method call part
+        String[] methodCallParts = methodCallPart.split("\\.");
+        if (methodCallParts.length != 2) {
+            LOGGER.error("Invalid method call part: " + methodCallPart);
+            return;
+        }
+        String classNameOrInstance = methodCallParts[0].trim();
+        String methodCall = methodCallParts[1].trim();
+
+        // Extracting the lambda parameters and body
+        int arrowIndex = lambdaPart.indexOf("->");
+        if (arrowIndex == -1) {
+            LOGGER.error("Invalid lambda syntax: " + lambdaPart);
+            return;
+        }
+        String lambdaParameters = lambdaPart.substring(0, arrowIndex).trim();
+        String lambdaBody = lambdaPart.substring(arrowIndex + 2).trim();
+
+        // Handle different types of argument enclosures
+        int methodOpenIndex = methodCall.indexOf("(");
+        int methodCloseIndex = methodCall.lastIndexOf(")");
+        if (methodOpenIndex == -1 || methodCloseIndex == -1 || methodOpenIndex > methodCloseIndex) {
+            LOGGER.error("Invalid method call syntax: " + methodCall);
+            return;
+        }
+
+        String methodName = methodCall.substring(0, methodOpenIndex).trim();
+        String methodArgs = methodCall.substring(methodOpenIndex + 1, methodCloseIndex).trim();
+
+        // Create an instance of the class or use a static method call
+        Object target;
+        boolean isStatic;
+        if (classNameOrInstance.endsWith("()")) {
+            String className = classNameOrInstance.substring(0, classNameOrInstance.length() - 2).trim();
+            target = createInstance(className);
+            isStatic = false;
+        } else {
+            target = classNameOrInstance;
+            isStatic = true;
+        }
+
+        if (target == null) {
+            LOGGER.error("Failed to create instance or find target for: " + classNameOrInstance);
+            return;
+        }
+
+        // Determine the type of consumer
+        invokeMethodWithLambda(target, methodName, lambdaParameters, lambdaBody, isStatic);
+    }
+    private void invokeMethodWithLambda(Object target, String methodName, String lambdaParameters, String lambdaBody, boolean isStatic) {
+        Class<?> clazz = isStatic ? importedClasses.get(target) : target.getClass();
+        if (clazz == null) {
+            LOGGER.error("Class not found for target: " + target);
+            return;
+        }
+
+        try {
+            Method method = findMethodForLambda(clazz, methodName, isStatic);
+            if (method != null && Modifier.isPublic(method.getModifiers())) {
+                Class<?> parameterType = method.getParameterTypes()[0];
+                Object consumer = createConsumer(parameterType, lambdaParameters, lambdaBody);
+                method.invoke(isStatic ? null : target, consumer);
+            } else {
+                LOGGER.error("Method not accessible or not found: " + methodName);
+            }
+        } catch (IllegalAccessException | InvocationTargetException e) {
+            LOGGER.error("Error invoking method: " + methodName, e);
+            if (e instanceof InvocationTargetException && e.getCause() != null) {
+                LOGGER.error("Invocation target exception: ", e.getCause());
+            }
+        }
+    }
+
+    private Method findMethodForLambda(Class<?> clazz, String methodName, boolean isStatic) {
+        for (Method method : clazz.getDeclaredMethods()) {
+            if (method.getName().equals(methodName) && Modifier.isStatic(method.getModifiers()) == isStatic) {
+                if (method.getParameterCount() == 1) {
+                    return method;
+                }
+            }
+        }
+        return null;
+    }
+
+    private Object createConsumer(Class<?> parameterType, String lambdaParameters, String lambdaBody) {
+        if (parameterType.equals(Consumer.class)) {
+            return (Consumer<String>) input -> {
+                String evaluatedBody = interpolateVariables(lambdaBody.replace("$" + lambdaParameters, input));
+                LOGGER.info(evaluatedBody);
+            };
+        } else if (parameterType.equals(BiConsumer.class)) {
+            // Assuming BiConsumer for demonstration; adapt as needed
+            return (BiConsumer<String, String>) (input1, input2) -> {
+                String evaluatedBody = interpolateVariables(lambdaBody.replace("$" + lambdaParameters.split(",")[0].trim(), input1).replace("$" + lambdaParameters.split(",")[1].trim(), input2));
+                LOGGER.info(evaluatedBody);
+            };
+        }
+        // Add other types as needed
+        throw new IllegalArgumentException("Unsupported consumer type: " + parameterType);
+    }
+    private void handleInstanceMethodCall(String classNameOrInstance, String methodCall) {
+        String className = classNameOrInstance.substring(0, classNameOrInstance.length() - 2).trim();
+        LOGGER.info("Creating instance of class: " + className);
+        Object instance = createInstance(className);
+        if (instance != null) {
+            invokeMethod(instance, methodCall);
+        }
+    }
+
+    private void handleOtherExpressions(String line) {
+        if (line.startsWith("//") || line.isEmpty()) {
+            return; // Ignore comments and empty lines
+        }
+        if (inLambda) {
+            lambdaContent.append(line).append("\n");
+            return;
+        }
+        // Block control for repeats or multi-line structures
+        if (handleBlockControl(line)) {
+            return;
+        }
+
+        // Direct command handling
+        if (line.startsWith("print(")) {
+            handlePrint(line);
+        } else if (line.startsWith("println(")) {
+            handlePrintln(line);
+        } else if (line.startsWith("readLine()")) {
+            handleReadLine();
+        } else if (line.startsWith("val ") || line.startsWith("var ")) {
+            defineVariable(line);
+        } else if (line.startsWith("listOf(") || line.startsWith("mutableListOf(") || line.startsWith("arrayListOf(")) {
+            handleList(line);
+        } else if (line.startsWith("setOf(") || line.startsWith("mutableSetOf(") || line.startsWith("hashSetOf(")) {
+            handleSet(line);
+        } else if (line.startsWith("mapOf(") || line.startsWith("mutableMapOf(") || line.startsWith("hashMapOf(")) {
+            handleMap(line);
+        } else if (line.startsWith("repeat(")) {
+            handleRepeatStart(line);
+        } else if (line.startsWith("measureTimeMillis {")) {
+            handleMeasureTimeMillis(line);
+        } else if (line.startsWith("measureNanoTime {")) {
+            handleMeasureNanoTime(line);
+        } else if (line.startsWith("require(") || line.startsWith("check(") || line.startsWith("assert(")) {
+            handleRequireCheckAssert(line);
+        } else if (line.startsWith("executeClass(")) {
+            handleExecuteClass(line);
+        } else {
+            evaluateExpression(line);
+        }
+    }
+
+    private boolean handleBlockControl(String line) {
+        if (isInRepeatBlock) {
+            if (line.endsWith("}")) {
+                handleRepeatEnd(line);
+            } else {
+                repeatBlockContent.append(line).append("\n");
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private void handleExecuteClass(String line) {
+        String[] parts = line.substring("executeClass(".length(), line.length() - 1).replace("\"", "").split(",");
+        loadAndExecuteClass(parts[0].trim(), parts[1].trim());
+    }
+
 
     private void handleRepeatStart(String line) {
         int openParenIndex = line.indexOf('(');
@@ -319,10 +610,41 @@ public class KotlinScriptInterpreter {
     }
 
     private void handlePrintln(String line) {
-        String content = line.substring("println(".length(), line.length() - 1).replace("\"", ""); // Remove double quotes
-        content = interpolateString(content); // Interpolate string
-        LOGGER.info(content + "\n");
+        String content = extractExpression(line, "println");
+        content = interpolateVariables(content); // Assuming this method handles the variable interpolation
+        LOGGER.info(content);
     }
+    private String extractExpression(String line, String command) {
+        int commandLength = command.length();
+        int startIndex = line.indexOf(command + "(") + commandLength + 1;  // Start index of the content within the parentheses
+        int endIndex = line.lastIndexOf(")");  // End index of the content within the parentheses
+
+        if (startIndex < 0 || endIndex < 0 || endIndex <= startIndex) {
+            LOGGER.error("Invalid syntax for " + command + ": " + line);
+            return "";
+        }
+
+        // Extract the content between the parentheses
+        return line.substring(startIndex, endIndex).trim();
+    }
+
+    private String interpolateVariables(String content) {
+        Pattern pattern = Pattern.compile("\\$\\{([^}]+)\\}");
+        Matcher matcher = pattern.matcher(content);
+        StringBuffer result = new StringBuffer();
+
+        while (matcher.find()) {
+            String variableName = matcher.group(1);
+            Object value = variableContext.get(variableName);
+            String replacement = value == null ? "null" : value.toString();
+            // Properly escape $ signs in the replacement string
+            replacement = Matcher.quoteReplacement(replacement);
+            matcher.appendReplacement(result, replacement);
+        }
+        matcher.appendTail(result);
+        return result.toString();
+    }
+
 
     private void handleReadLine() {
         String input = scanner.nextLine();
@@ -424,42 +746,103 @@ public class KotlinScriptInterpreter {
         LOGGER.info("Defined variable: " + variableName + " = " + value);
     }
 
-
-
-
     private Object evaluateExpression(String expression) {
         expression = expression.trim();
-        if (expression.isEmpty()) {
-            return null; // Handle empty expressions
-        }
+
+        // Direct return of strings
         if (expression.startsWith("\"") && expression.endsWith("\"")) {
-            // Handle string literals with interpolation
-            String literal = expression.substring(1, expression.length() - 1);
-            return interpolateString(literal);
+            return expression.substring(1, expression.length() - 1);
         }
-        // Split by space to check for arithmetic operations
+
+        // Handling lambda expressions
+        if (expression.contains("->")) {
+            return handleLambdaExpression(expression);
+        }
+
+        return processDirectExpression(expression);
+    }
+
+    private Function<String, String> handleLambdaExpression(String expression) {
+        // Extract the part after '->' which is the lambda body
+        String lambdaBody = expression.substring(expression.indexOf("->") + 2).trim();
+
+        // Return a function that processes this body when called
+        return input -> {
+            // This should replace the placeholder '$s' with the actual input
+            String processedExpression = lambdaBody.replace("$s", input);
+
+            // Evaluate this expression directly to handle replacements and return result
+            return (String) evaluateExpression(processedExpression);
+        };
+    }
+
+
+    private Object processDirectExpression(String expression) {
+        // Remove any surrounding whitespace and normalize the expression
+        expression = expression.trim().replaceAll("\\s+", " ");
+
+        // Handle basic arithmetic or direct value access
+        if (expression.matches("-?\\d+(\\.\\d+)?")) {  // Numeric values
+            return expression.contains(".") ? Double.parseDouble(expression) : Integer.parseInt(expression);
+        } else if (expression.startsWith("\"") && expression.endsWith("\"")) {  // String literals
+            return expression.substring(1, expression.length() - 1);
+        } else if (variableContext.containsKey(expression)) {  // Variables
+            return variableContext.get(expression);
+        }
+
+        // Split the expression to analyze if it's a function call or complex expression
         String[] tokens = expression.split(" ");
         if (tokens.length == 1) {
-            return getVariableValue(tokens[0]);
-        } else if (tokens.length == 3) {
-            Object leftValue = getVariableValue(tokens[0]);
-            String operator = tokens[1];
-            Object rightValue = getVariableValue(tokens[2]);
-            return performOperation(leftValue, operator, rightValue);
+            // Single token could be a function call or a variable
+            return variableContext.getOrDefault(tokens[0], null);
+        } else if (tokens.length == 3) {  // Possible arithmetic operation
+            return handleArithmetic(tokens[0], tokens[1], tokens[2]);
         }
-        LOGGER.warn("Unrecognized or complex expression: " + expression);
+
+        LOGGER.warn("Unhandled direct expression: " + expression);
         return null;
     }
 
+    private Object handleArithmetic(String left, String operator, String right) {
+        Object leftVal = getVariableValue(left);
+        Object rightVal = getVariableValue(right);
+
+        if (leftVal instanceof Number && rightVal instanceof Number) {
+            return calculate((Number) leftVal, operator, (Number) rightVal);
+        }
+
+        LOGGER.error("Arithmetic operation not applicable for non-numeric types.");
+        return null;
+    }
+
+    private Object calculate(Number left, String operator, Number right) {
+        switch (operator) {
+            case "+": return left.doubleValue() + right.doubleValue();
+            case "-": return left.doubleValue() - right.doubleValue();
+            case "*": return left.doubleValue() * right.doubleValue();
+            case "/":
+                if (right.doubleValue() == 0) {
+                    LOGGER.error("Division by zero.");
+                    return null;
+                }
+                return left.doubleValue() / right.doubleValue();
+            default:
+                LOGGER.error("Unknown operator: " + operator);
+                return null;
+        }
+    }
+
+
     private String interpolateString(String literal) {
-        // Find all variables in the string and replace them with their values
         StringBuffer result = new StringBuffer();
         Matcher matcher = Pattern.compile("\\$\\w+").matcher(literal);
         while (matcher.find()) {
             String variable = matcher.group();
-            String varName = variable.substring(1); // Remove $
+            String varName = variable.substring(1); // Remove the initial $
             Object varValue = variableContext.getOrDefault(varName, variable);
-            matcher.appendReplacement(result, varValue.toString());
+            // Properly escape $ signs in the replacement string
+            String replacement = varValue.toString().replace("$", "\\$\\$");
+            matcher.appendReplacement(result, replacement);
         }
         matcher.appendTail(result);
         return result.toString();
