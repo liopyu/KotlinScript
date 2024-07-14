@@ -23,10 +23,4 @@ public class KotlinScript {
         scriptInterpreter = new KotlinScriptInterpreter();
         scriptInterpreter.interpretKotlinScript("data/scripts/script.kts");
     }
-
-    @SubscribeEvent
-    public void onRegisterCommands(RegisterCommandsEvent event) {
-        // Trigger script interpretation when commands are registered
-
-    }
 }
