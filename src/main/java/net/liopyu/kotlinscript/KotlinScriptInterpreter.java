@@ -1,6 +1,7 @@
 package net.liopyu.kotlinscript;
 
 import com.mojang.logging.LogUtils;
+import org.openjdk.nashorn.internal.runtime.ScriptFunction;
 import org.slf4j.Logger;
 
 import java.io.InputStream;
@@ -8,12 +9,11 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Scanner;
+import java.util.*;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class KotlinScriptInterpreter {
     public static final Logger LOGGER = LogUtils.getLogger();
@@ -21,42 +21,55 @@ public class KotlinScriptInterpreter {
     private final Map<String, Class<?>> importedClasses = new HashMap<>();
     private boolean isLambdaBlock = false;
     private StringBuilder lambdaBuilder = new StringBuilder();
+    private InterpreterContext context;
     public KotlinScriptInterpreter() {
+        this.context = new InterpreterContext();
     }
     private void processRegularLine(String line) {
-        // Skip comments
-        if (line.startsWith("//")) return;
+        // Skip comments and empty lines
+        if (line.trim().isEmpty() || line.startsWith("//")) {
+            return;
+        }
 
-        // Handle import statements
+        // Handle import statements to dynamically load classes
         if (line.startsWith("import ")) {
             String className = line.substring("import ".length()).trim();
             importClass(className);
             return;
         }
 
-        // Handle method calls and property accesses with check for imports
+        // Check for method calls or property accesses
         if (line.contains(".")) {
-            String className = extractClassNameFromLine(line);
-            if (className != null && !importedClasses.containsKey(className)) {
-                LOGGER.error("Class not imported: " + className);
-                return;
+            String[] parts = line.split("\\.");
+            String objectOrClassName = parts[0].trim();
+
+            // Check if the class is imported or if it is an instance method call
+            if (Character.isUpperCase(objectOrClassName.charAt(0))) { // Assuming class names start with an uppercase letter
+                if (!importedClasses.containsKey(objectOrClassName)) {
+                    LOGGER.error("Class not imported or instance not found: " + objectOrClassName);
+                    return;
+                }
             }
             handleMethodOrPropertyAccess(line);
             return;
         }
 
-        // Handle print and println commands
+        // Handle variable definitions and assignments
+        if (line.matches("^(var|val)\\s+\\w+\\s*=.*")) {
+            defineVariable(line);
+            return;
+        }
+
+        // Handle print and println commands for basic output
         if (line.startsWith("print(") || line.startsWith("println(")) {
             handlePrintCommands(line);
             return;
         }
 
-        // Handle variable definitions
-        if (line.matches("^var\\s+\\w+\\s*=.*") || line.matches("^val\\s+\\w+\\s*=.*")) {
-            defineVariable(line);
-            return;
-        }
+        // For all other cases, attempt to evaluate the line as an expression
+        evaluateExpression(line);
     }
+
     private String extractClassNameFromLine(String line) {
         // Assume the line format "ClassName.methodName()" or "ClassName().methodName()"
         int dotIndex = line.indexOf('.');
@@ -257,28 +270,24 @@ public class KotlinScriptInterpreter {
         return args;
     }
 
+    private void interpretLine(String line, Context context) {
+        if (line.isEmpty() || line.startsWith("//")) {
+            // Skip empty lines and comments
+            return;
+        }
 
-
-
-    private void interpretLine(String line) {
-        if (isLambdaBlock) {
-            lambdaBuilder.append(line).append("\n");
-            if (line.contains("}")) {
-                // End of lambda block
-                isLambdaBlock = false;
-                String lambdaExpression = lambdaBuilder.toString();
-                lambdaBuilder.setLength(0);  // Clear the builder for future use
-                processLambdaExpression(lambdaExpression);  // Process the complete lambda expression
-            }
+        if (line.startsWith("if") || line.startsWith("for") || line.startsWith("while")) {
+            // Handle control structures which might involve creating new scopes
+            handleControlStructure(line, context);
+        } else if (line.contains("=")) {
+            // Handle assignments or declarations
+            handleAssignment(line, context.currentScope);
+        } else if (line.startsWith("return")) {
+            // Handle return statements, potentially breaking out of the function
+            handleReturn(line, context);
         } else {
-            if (line.contains("{")) {
-                // Start of lambda block
-                isLambdaBlock = true;
-                lambdaBuilder.append(line).append("\n");
-            } else {
-                // Regular line processing
-                processRegularLine(line);
-            }
+            // Evaluate expressions (could be function calls, operations, etc.)
+            evaluateExpression(line, context.currentScope);
         }
     }
     private void processLambdaExpression(String lambdaExpression) {
@@ -324,9 +333,37 @@ public class KotlinScriptInterpreter {
 
         invokeMethodWithConsumer(instance, methodName, body, variableName);
     }
+    private void processLambda(Object instance, String methodName, String lambda) {
+        LOGGER.info("[processLambda] Processing lambda for method: " + methodName + " with lambda: " + lambda);
 
+        int arrowIndex = lambda.indexOf("->");
+        String variableName = lambda.substring(lambda.indexOf('{') + 1, arrowIndex).trim();
+        String body = lambda.substring(arrowIndex + 2, lambda.lastIndexOf('}')).trim();
 
+        LambdaContext context = new LambdaContext(body);
 
+        // Extract variables
+        Pattern varPattern = Pattern.compile("val\\s+(\\w+)\\s*=\\s*\"([^\"]*)\"");
+        Matcher matcher = varPattern.matcher(body);
+        while (matcher.find()) {
+            String varName = matcher.group(1);
+            String varValue = matcher.group(2);
+            context.addVariable(varName, varValue);
+        }
+
+        Consumer<String> consumer = input -> {
+            LOGGER.info("[processLambda] Executing lambda with input: " + input);
+            String result = context.processInput(variableName, input);
+            LOGGER.info("[processLambda] Result: " + result);
+        };
+
+        try {
+            Method method = instance.getClass().getMethod(methodName, Consumer.class);
+            method.invoke(instance, consumer);
+        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+            LOGGER.error("[processLambda] Error invoking method with lambda: " + methodName, e);
+        }
+    }
 
     private boolean invokeMethodWithConsumer(Object instance, String methodName, String body, String variableName) {
         try {
@@ -349,21 +386,45 @@ public class KotlinScriptInterpreter {
             return false;
         }
     }
+    private void defineFunction(String declaration, String body) {
+        String functionName = extractFunctionName(declaration);
+        List<String> parameters = extractParameters(declaration);
 
-    private void processLambda(Object instance, String methodName, String lambda) {
-        LOGGER.info("Processing lambda for method: " + methodName + " with lambda: " + lambda);
-        // Extract the variable name and the lambda body
-        String variableName = lambda.substring(lambda.indexOf('{') + 1, lambda.indexOf("->")).trim();
-        String body = lambda.substring(lambda.indexOf("->") + 2, lambda.lastIndexOf('}')).trim();
+        // Create a new function object
+        ScriptFunction function = new ScriptFunction(functionName, parameters, body, context.currentScope);
+        context.currentScope.storeFunction(functionName, function);
 
-        try {
-            Method method = instance.getClass().getMethod(methodName, Consumer.class);
-            Consumer<String> consumer = input -> LOGGER.info(body.replace("$" + variableName, input));
-            method.invoke(instance, consumer);
-        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
-            LOGGER.error("Error invoking method with lambda: " + methodName, e);
+        LOGGER.info("Function defined: " + functionName + " with params " + parameters);
+    }
+    private void executeFunctionBody(String body, Scope functionScope) {
+        // Split the body into lines assuming each statement ends with a newline
+        String[] lines = body.split("\\r?\\n");
+
+        // Context class to manage current state, including scope
+        Context context = new Context(functionScope);
+
+        for (String line : lines) {
+            interpretLine(line.trim(), context);
         }
     }
+    private void callFunction(String functionName, List<Object> arguments) {
+        ScriptFunction function = context.currentScope.lookupFunction(functionName);
+        if (function == null) {
+            LOGGER.error("Function not found: " + functionName);
+            return;
+        }
+
+        // Create a new scope for function execution
+        Scope functionScope = new Scope(function.getDeclarationScope());
+        for (int i = 0; i < function.getParameters().size(); i++) {
+            functionScope.declareVariable(function.getParameters().get(i), arguments.get(i));
+        }
+
+        // Execute the function body
+        executeFunctionBody(function.getBody(), functionScope);
+    }
+
+
     private void defineVariable(String declaration) {
         String[] parts = declaration.split("=", 2);
         if (parts.length != 2) {
@@ -371,18 +432,25 @@ public class KotlinScriptInterpreter {
             return;
         }
 
+        // Trim and determine whether the declaration is using "var" (mutable) or "val" (immutable)
         String varDeclaration = parts[0].trim();
         String valueExpression = parts[1].trim();
 
-        // Correct the determination of variable names when using "var" or "val"
         boolean isVal = varDeclaration.startsWith("val ");
-        String variableName = varDeclaration.substring(isVal ? "val ".length() : "var ".length());
+        String variableName = varDeclaration.substring(isVal ? "val ".length() : "var ".length()).trim();
 
+        // Evaluate the expression to get the value to be stored in the variable
         Object value = evaluateExpression(valueExpression);
-        variableContext.put(variableName, value);
 
-        LOGGER.info("Defined variable: " + variableName + " = " + value);
+        // Store the variable in the current scope instead of a global context
+        try {
+            context.currentScope.declareVariable(variableName, value);
+            LOGGER.info("Defined variable: " + variableName + " = " + value);
+        } catch (Exception e) {
+            LOGGER.error("Error declaring variable '" + variableName + "': " + e.getMessage());
+        }
     }
+
     private Object evaluateExpression(String expression) {
         expression = expression.trim();
 

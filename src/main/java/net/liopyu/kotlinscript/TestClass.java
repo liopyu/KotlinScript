@@ -7,7 +7,6 @@ import java.util.function.Consumer;
 public class TestClass {
     public static Logger LOGGER = KotlinScriptInterpreter.LOGGER;
     public void execute(Consumer<String> consumer) {
-        // Invoking the consumer with a specific string
         consumer.accept("Test input from TestClass");
     }
 }
