@@ -1,6 +1,7 @@
 import net.liopyu.kotlinscript.TestClass
 
-TestClass().execute { input ->
-    println("Received in consumer: $input")
+TestClass().execute { i ->
+    val testString = " test"
+    println("Received in consumer: $i $testString")
 }
 

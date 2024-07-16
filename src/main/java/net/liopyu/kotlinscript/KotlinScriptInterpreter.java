@@ -22,19 +22,82 @@ public class KotlinScriptInterpreter {
     private final Map<String, Object> instanceContext = new HashMap<>();
     private final Map<String, Class<?>> importedClasses = new HashMap<>();
     private final Map<String, Object> classInstances = new HashMap<>();
+    private boolean isLambdaBlock = false;
+    private StringBuilder lambdaBuilder = new StringBuilder();
 
     public KotlinScriptInterpreter() {
     }
+    private void processRegularLine(String line) {
+        // Skip comments
+        if (line.startsWith("//")) return;
+
+        // Handle import statements
+        if (line.startsWith("import ")) {
+            String className = line.substring("import ".length()).trim();
+            importClass(className);
+            return;
+        }
+
+        // Handle method calls and property accesses with check for imports
+        if (line.contains(".")) {
+            String className = extractClassNameFromLine(line);
+            if (className != null && !importedClasses.containsKey(className)) {
+                LOGGER.error("Class not imported: " + className);
+                return;
+            }
+            handleMethodOrPropertyAccess(line);
+            return;
+        }
+
+        // Handle print and println commands
+        if (line.startsWith("print(") || line.startsWith("println(")) {
+            handlePrintCommands(line);
+            return;
+        }
+
+        // Handle variable definitions
+        if (line.matches("^var\\s+\\w+\\s*=.*") || line.matches("^val\\s+\\w+\\s*=.*")) {
+            defineVariable(line);
+            return;
+        }
+    }
+    private String extractClassNameFromLine(String line) {
+        // Assume the line format "ClassName.methodName()" or "ClassName().methodName()"
+        int dotIndex = line.indexOf('.');
+        if (dotIndex == -1) return null;  // Early return if no dot present
+
+        String beforeDot = line.substring(0, dotIndex);
+        if (beforeDot.contains("(")) {
+            // This handles "ClassName().methodName"
+            return beforeDot.substring(0, beforeDot.indexOf('(')).trim();
+        }
+        return beforeDot.trim();  // Return "ClassName" part
+    }
+
+    private void handlePrintCommands(String line) {
+        // Extracting the message from print/println commands
+        String message = line.substring(line.indexOf('(') + 1, line.lastIndexOf(')'));
+        if (line.startsWith("println(")) {
+            LOGGER.info(message);
+        } else if (line.startsWith("print(")) {
+            LOGGER.info(message.replace("\"", "")); // Assuming removing quotes for simplicity
+        }
+    }
+
+
     private void importClass(String fullClassName) {
         try {
             Class<?> clazz = Class.forName(fullClassName);
             String simpleName = clazz.getSimpleName();
-            importedClasses.put(simpleName, clazz);
-            LOGGER.info("Imported class: " + fullClassName);
+            importedClasses.put(simpleName, clazz);  // Map simple name to class
+            LOGGER.info("Class imported successfully: " + fullClassName + " as " + simpleName);
         } catch (ClassNotFoundException e) {
             LOGGER.error("Class not found: " + fullClassName, e);
         }
     }
+
+
+
 
     private void loadAndExecuteClass(String className, String instanceName) {
         try {
@@ -343,16 +406,112 @@ public class KotlinScriptInterpreter {
     private int repeatCount = 0;
 
     private void interpretLine(String line) {
-        LOGGER.info("Interpreting line: " + line);
-
-        if (line.startsWith("import ")) {
-            handleImport(line);
-        } else if (line.contains(".")) {
-            handleMethodCall(line);
+        if (isLambdaBlock) {
+            lambdaBuilder.append(line).append("\n");
+            if (line.contains("}")) {
+                // End of lambda block
+                isLambdaBlock = false;
+                String lambdaExpression = lambdaBuilder.toString();
+                lambdaBuilder.setLength(0);  // Clear the builder for future use
+                processLambda(lambdaExpression);  // Process the complete lambda expression
+            }
         } else {
-            handleOtherExpressions(line);
+            if (line.contains("{")) {
+                // Start of lambda block
+                isLambdaBlock = true;
+                lambdaBuilder.append(line).append("\n");
+            } else {
+                // Regular line processing
+                processRegularLine(line);
+            }
         }
     }
+    private void processLambda(String lambdaExpression) {
+        LOGGER.info("Processing complete lambda expression: " + lambdaExpression);
+
+        int dotIndex = lambdaExpression.lastIndexOf(".");
+        int openBraceIndex = lambdaExpression.indexOf("{");
+
+        // Validate indices are in the correct order and within string bounds
+        if (dotIndex == -1 || openBraceIndex == -1 || dotIndex >= openBraceIndex || openBraceIndex >= lambdaExpression.length()) {
+            LOGGER.error("Invalid format for lambda expression: " + lambdaExpression);
+            return;
+        }
+
+        String header = lambdaExpression.substring(0, openBraceIndex).trim();
+        String methodName = header.substring(dotIndex + 1).trim(); // Adjust to ensure it does not go out of bounds
+
+        String className = header.substring(0, dotIndex).replace("()", "").trim(); // Handle class instantiation part
+
+        String body = lambdaExpression.substring(lambdaExpression.indexOf("->") + 2, lambdaExpression.lastIndexOf("}")).trim();
+
+        Object instance = createInstance(className);
+        if (instance == null) {
+            LOGGER.error("Failed to create instance for class: " + className);
+            return;
+        }
+
+        invokeMethodWithConsumer(instance, methodName, body);
+    }
+
+
+    private boolean invokeMethodWithConsumer(Object instance, String methodName, String body) {
+        try {
+            // Dynamically find a method that matches Consumer<String> parameter
+            Method method = Arrays.stream(instance.getClass().getDeclaredMethods())
+                    .filter(m -> m.getName().equals(methodName) && m.getParameterCount() == 1 &&
+                            Consumer.class.isAssignableFrom(m.getParameterTypes()[0]))
+                    .findFirst()
+                    .orElse(null);
+
+            if (method == null) {
+                LOGGER.error("No suitable method found for lambda: " + methodName);
+                return false;
+            }
+
+            Consumer<String> consumer = input -> LOGGER.info(body.replace("$input", input));  // Replace placeholder with actual input
+            method.invoke(instance, consumer);
+            return true;
+        } catch (IllegalAccessException | InvocationTargetException e) {
+            LOGGER.error("Error invoking method with lambda: " + methodName, e);
+            return false;
+        }
+    }
+
+
+
+    private void processLambda(Object instance, String methodName, String lambda) {
+        LOGGER.info("Processing lambda for method: " + methodName + " with lambda: " + lambda);
+        Consumer<String> consumer = input -> {
+            String body = lambda.substring(lambda.indexOf("->") + 2, lambda.lastIndexOf('}')).trim();
+            LOGGER.info(body.replace("$input", input));  // Simulated execution of the lambda body
+        };
+
+        try {
+            Method method = instance.getClass().getMethod(methodName, Consumer.class);
+            method.invoke(instance, consumer);
+        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+            LOGGER.error("Error invoking method with lambda: " + methodName, e);
+        }
+    }
+
+
+    private Consumer<String> parseLambdaToConsumer(String lambda) {
+        // Example lambda: "{ input -> println("Received in consumer: $input") }"
+        // Strip curly braces and 'input ->'
+        String body = lambda.substring(lambda.indexOf("->") + 2, lambda.length() - 1).trim();
+        return input -> LOGGER.info(body.replace("$input", input));
+    }
+
+    private void callMethodWithConsumer(Object instance, String methodName, Consumer<String> consumer) {
+        try {
+            Method method = instance.getClass().getMethod(methodName, Consumer.class);
+            method.invoke(instance, consumer);
+        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+            LOGGER.error("Failed to call method with Consumer: " + methodName, e);
+        }
+    }
+
 
     private void handleImport(String line) {
         String className = line.substring("import ".length()).trim();
@@ -726,7 +885,6 @@ public class KotlinScriptInterpreter {
             throw new IllegalArgumentException("Precondition failed: " + line);
         }
     }
-
     private void defineVariable(String declaration) {
         String[] parts = declaration.split("=", 2);
         if (parts.length != 2) {
@@ -737,30 +895,82 @@ public class KotlinScriptInterpreter {
         String varDeclaration = parts[0].trim();
         String valueExpression = parts[1].trim();
 
+        // Correct the determination of variable names when using "var" or "val"
         boolean isVal = varDeclaration.startsWith("val ");
-        String variableName = varDeclaration.substring(isVal ? 4 : 4); // Skip "val " or "var "
+        String variableName = varDeclaration.substring(isVal ? "val ".length() : "var ".length());
 
         Object value = evaluateExpression(valueExpression);
         variableContext.put(variableName, value);
 
         LOGGER.info("Defined variable: " + variableName + " = " + value);
     }
-
     private Object evaluateExpression(String expression) {
         expression = expression.trim();
 
-        // Direct return of strings
         if (expression.startsWith("\"") && expression.endsWith("\"")) {
-            return expression.substring(1, expression.length() - 1);
+            return expression.substring(1, expression.length() - 1); // Handle string literals
         }
 
-        // Handling lambda expressions
         if (expression.contains("->")) {
-            return handleLambdaExpression(expression);
+            return handleLambdaExpression(expression); // Handle lambda expressions
         }
 
-        return processDirectExpression(expression);
+        return processDirectExpression(expression); // Process other types of expressions
     }
+    private void handleMethodOrPropertyAccess(String line) {
+        int dotIndex = line.indexOf('.');
+        int openBraceIndex = line.indexOf('{');
+
+        // Check for basic syntax errors before proceeding
+        if (dotIndex == -1) {
+            LOGGER.error("No method call or property access found in line: " + line);
+            return;
+        }
+
+        // Determine if the access is a method call potentially with a lambda
+        String objectAndMethod = line.substring(0, dotIndex);
+        String methodName = openBraceIndex != -1 ?
+                line.substring(dotIndex + 1, openBraceIndex).trim() :
+                line.substring(dotIndex + 1).trim();
+
+        if (openBraceIndex != -1) {
+            // Handle lambda expressions
+            if (!line.endsWith("}")) {
+                LOGGER.error("Lambda block is not properly closed: " + line);
+                return;
+            }
+
+            String lambda = line.substring(openBraceIndex);
+            if (!objectAndMethod.endsWith("()")) {
+                LOGGER.error("Method call for lambda should include object instantiation '()': " + objectAndMethod);
+                return;
+            }
+
+            String className = objectAndMethod.substring(0, objectAndMethod.length() - 2);
+            Object instance = createInstance(className);
+            if (instance == null) {
+                LOGGER.error("Failed to create instance for class: " + className);
+                return;
+            }
+            processLambda(instance, methodName, lambda);
+        } else {
+            // Handle regular method calls or property accesses
+            if (!objectAndMethod.contains("()")) {
+                LOGGER.error("Expected method call to include '()' for instance creation: " + objectAndMethod);
+                return;
+            }
+
+            String className = objectAndMethod.substring(0, objectAndMethod.indexOf('('));
+            Object instance = createInstance(className);
+            if (instance == null) {
+                LOGGER.error("Failed to create instance for class: " + className);
+                return;
+            }
+            invokeMethod(instance, methodName);
+        }
+    }
+
+
 
     private Function<String, String> handleLambdaExpression(String expression) {
         // Extract the part after '->' which is the lambda body
@@ -936,12 +1146,12 @@ public class KotlinScriptInterpreter {
         }
         try {
             Object instance = clazz.getDeclaredConstructor().newInstance();
-            classInstances.put(className, instance);
             return instance;
         } catch (InstantiationException | IllegalAccessException | NoSuchMethodException | InvocationTargetException e) {
             LOGGER.error("Error creating instance of class: " + className, e);
             return null;
         }
     }
+
 
 }
