@@ -480,21 +480,30 @@ public class KotlinScriptInterpreter {
 
 
 
-    private void processLambda(Object instance, String methodName, String lambda) {
-        LOGGER.info("Processing lambda for method: " + methodName + " with lambda: " + lambda);
-        Consumer<String> consumer = input -> {
-            String body = lambda.substring(lambda.indexOf("->") + 2, lambda.lastIndexOf('}')).trim();
-            LOGGER.info(body.replace("$input", input));  // Simulated execution of the lambda body
-        };
+    private void processLambda(Object instance, String methodName, String lambdaBody) {
+        // Create a local context for variables defined within the lambda
+        Map<String, Object> localContext = new HashMap<>();
+        String[] lines = lambdaBody.split("\\n");
+        String processedBody = "";
 
-        try {
-            Method method = instance.getClass().getMethod(methodName, Consumer.class);
-            method.invoke(instance, consumer);
-        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
-            LOGGER.error("Error invoking method with lambda: " + methodName, e);
+        for (String line : lines) {
+            if (line.trim().startsWith("val ")) {
+                handleVariableDeclaration(localContext, line.trim());
+            } else {
+                processedBody += interpolateVariables(line.trim(), localContext) + "\n";
+            }
+        }
+
+        invokeMethodWithLambda(instance, methodName, processedBody, localContext);
+    }
+    private void handleVariableDeclaration(Map<String, Object> context, String declaration) {
+        String[] parts = declaration.split("=", 2);
+        if (parts.length == 2) {
+            String varName = parts[0].substring(parts[0].indexOf("val ") + 4).trim();
+            Object value = evaluateExpression(parts[1].trim());
+            context.put(varName, value);
         }
     }
-
 
     private Consumer<String> parseLambdaToConsumer(String lambda) {
         // Example lambda: "{ input -> println("Received in consumer: $input") }"
@@ -614,29 +623,41 @@ public class KotlinScriptInterpreter {
         // Determine the type of consumer
         invokeMethodWithLambda(target, methodName, lambdaParameters, lambdaBody, isStatic);
     }
-    private void invokeMethodWithLambda(Object target, String methodName, String lambdaParameters, String lambdaBody, boolean isStatic) {
-        Class<?> clazz = isStatic ? importedClasses.get(target) : target.getClass();
+    private void invokeMethodWithLambda(Object target, String methodName, String body, Map<String, Object> context, boolean isStatic) {
+        Class<?> clazz = isStatic ? importedClasses.get(target.toString()) : target.getClass();
         if (clazz == null) {
             LOGGER.error("Class not found for target: " + target);
             return;
         }
 
         try {
-            Method method = findMethodForLambda(clazz, methodName, isStatic);
-            if (method != null && Modifier.isPublic(method.getModifiers())) {
-                Class<?> parameterType = method.getParameterTypes()[0];
-                Object consumer = createConsumer(parameterType, lambdaParameters, lambdaBody);
-                method.invoke(isStatic ? null : target, consumer);
-            } else {
-                LOGGER.error("Method not accessible or not found: " + methodName);
+            Method method = Arrays.stream(clazz.getMethods())
+                    .filter(m -> m.getName().equals(methodName) && m.getParameterCount() == 1 && Consumer.class.isAssignableFrom(m.getParameterTypes()[0]))
+                    .findFirst()
+                    .orElse(null);
+
+            if (method == null) {
+                LOGGER.error("Method " + methodName + " suitable for lambda invocation not found.");
+                return;
             }
+
+            Consumer<String> lambda = input -> {
+                String interpolatedBody = interpolateVariables(body, context);  // Interpolate using the local context
+                LOGGER.info("Lambda executed with input: " + input);
+                // Execute any additional logic or expressions within the lambda
+                evaluateExpression(interpolatedBody);
+            };
+
+            method.invoke(isStatic ? null : target, lambda);
         } catch (IllegalAccessException | InvocationTargetException e) {
-            LOGGER.error("Error invoking method: " + methodName, e);
-            if (e instanceof InvocationTargetException && e.getCause() != null) {
+            LOGGER.error("Error invoking method with lambda: " + methodName, e);
+            if (e.getCause() != null) {
                 LOGGER.error("Invocation target exception: ", e.getCause());
             }
         }
     }
+
+
 
     private Method findMethodForLambda(Class<?> clazz, String methodName, boolean isStatic) {
         for (Method method : clazz.getDeclaredMethods()) {
@@ -649,22 +670,6 @@ public class KotlinScriptInterpreter {
         return null;
     }
 
-    private Object createConsumer(Class<?> parameterType, String lambdaParameters, String lambdaBody) {
-        if (parameterType.equals(Consumer.class)) {
-            return (Consumer<String>) input -> {
-                String evaluatedBody = interpolateVariables(lambdaBody.replace("$" + lambdaParameters, input));
-                LOGGER.info(evaluatedBody);
-            };
-        } else if (parameterType.equals(BiConsumer.class)) {
-            // Assuming BiConsumer for demonstration; adapt as needed
-            return (BiConsumer<String, String>) (input1, input2) -> {
-                String evaluatedBody = interpolateVariables(lambdaBody.replace("$" + lambdaParameters.split(",")[0].trim(), input1).replace("$" + lambdaParameters.split(",")[1].trim(), input2));
-                LOGGER.info(evaluatedBody);
-            };
-        }
-        // Add other types as needed
-        throw new IllegalArgumentException("Unsupported consumer type: " + parameterType);
-    }
     private void handleInstanceMethodCall(String classNameOrInstance, String methodCall) {
         String className = classNameOrInstance.substring(0, classNameOrInstance.length() - 2).trim();
         LOGGER.info("Creating instance of class: " + className);
@@ -767,41 +772,39 @@ public class KotlinScriptInterpreter {
         String content = line.substring("print(".length(), line.length() - 1).replace("\"", ""); // Remove double quotes
         LOGGER.info(content);
     }
-
+    private Map<String, Object> globalContext = new HashMap<>();
     private void handlePrintln(String line) {
         String content = extractExpression(line, "println");
-        content = interpolateVariables(content); // Assuming this method handles the variable interpolation
-        LOGGER.info(content);
+        if (!content.isEmpty()) {
+            // Pass the global context or another relevant context to the interpolation function
+            content = interpolateVariables(content, globalContext);
+            LOGGER.info(content);
+        } else {
+            LOGGER.error("Invalid syntax for println in line: " + line);
+        }
     }
     private String extractExpression(String line, String command) {
         int commandLength = command.length();
-        int startIndex = line.indexOf(command + "(") + commandLength + 1;  // Start index of the content within the parentheses
-        int endIndex = line.lastIndexOf(")");  // End index of the content within the parentheses
-
-        if (startIndex < 0 || endIndex < 0 || endIndex <= startIndex) {
-            LOGGER.error("Invalid syntax for " + command + ": " + line);
+        int start = line.indexOf(command + "(") + commandLength + 1;
+        int end = line.lastIndexOf(")");
+        if (start < 0 || end < 0 || end <= start) {
+            LOGGER.error("Invalid expression for command " + command + ": " + line);
             return "";
         }
-
-        // Extract the content between the parentheses
-        return line.substring(startIndex, endIndex).trim();
+        return line.substring(start, end).trim();
     }
 
-    private String interpolateVariables(String content) {
-        Pattern pattern = Pattern.compile("\\$\\{([^}]+)\\}");
-        Matcher matcher = pattern.matcher(content);
-        StringBuffer result = new StringBuffer();
-
+    private String interpolateVariables(String line, Map<String, Object> context) {
+        Pattern pattern = Pattern.compile("\\$(\\w+)");
+        Matcher matcher = pattern.matcher(line);
+        StringBuffer sb = new StringBuffer();
         while (matcher.find()) {
-            String variableName = matcher.group(1);
-            Object value = variableContext.get(variableName);
-            String replacement = value == null ? "null" : value.toString();
-            // Properly escape $ signs in the replacement string
-            replacement = Matcher.quoteReplacement(replacement);
-            matcher.appendReplacement(result, replacement);
+            String varName = matcher.group(1);
+            String replacement = context.containsKey(varName) ? context.get(varName).toString() : "undefined";
+            matcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
         }
-        matcher.appendTail(result);
-        return result.toString();
+        matcher.appendTail(sb);
+        return sb.toString();
     }
 
 
@@ -895,27 +898,34 @@ public class KotlinScriptInterpreter {
         String varDeclaration = parts[0].trim();
         String valueExpression = parts[1].trim();
 
-        // Correct the determination of variable names when using "var" or "val"
-        boolean isVal = varDeclaration.startsWith("val ");
-        String variableName = varDeclaration.substring(isVal ? "val ".length() : "var ".length());
+        // Determine if the variable is declared with 'val' (immutable) or 'var' (mutable)
+        boolean isImmutable = varDeclaration.startsWith("val ");
+        String variableName = varDeclaration.substring(isImmutable ? "val ".length() : "var ".length()).trim();
 
-        Object value = evaluateExpression(valueExpression);
-        variableContext.put(variableName, value);
-
-        LOGGER.info("Defined variable: " + variableName + " = " + value);
+        try {
+            Object value = evaluateExpression(valueExpression);
+            variableContext.put(variableName, value);
+            LOGGER.info("Defined variable: " + variableName + " = " + (value != null ? value.toString() : "null"));
+        } catch (Exception e) {
+            LOGGER.error("Error evaluating expression for variable '" + variableName + "': " + valueExpression, e);
+        }
     }
     private Object evaluateExpression(String expression) {
+        // Example implementation, extend this to handle more complex expressions.
         expression = expression.trim();
-
-        if (expression.startsWith("\"") && expression.endsWith("\"")) {
-            return expression.substring(1, expression.length() - 1); // Handle string literals
+        try {
+            if (expression.matches("-?\\d+(\\.\\d+)?")) {  // Numeric literals
+                return expression.contains(".") ? Double.parseDouble(expression) : Integer.parseInt(expression);
+            } else if (expression.startsWith("\"") && expression.endsWith("\"")) {  // String literals
+                return expression.substring(1, expression.length() - 1);
+            } else if (variableContext.containsKey(expression)) {  // Variable references
+                return variableContext.get(expression);
+            }
+            // Add more cases as needed
+        } catch (NumberFormatException e) {
+            LOGGER.error("Number format exception for expression: " + expression, e);
         }
-
-        if (expression.contains("->")) {
-            return handleLambdaExpression(expression); // Handle lambda expressions
-        }
-
-        return processDirectExpression(expression); // Process other types of expressions
+        return null;
     }
     private void handleMethodOrPropertyAccess(String line) {
         int dotIndex = line.indexOf('.');
