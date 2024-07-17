@@ -1,9 +1,9 @@
 {
   "required": true,
   "minVersion": "0.8",
-  "package": "net.liopyu.kotlinscript.kotlin_script.mixin",
+  "package": "net.liopyu.kotlinscript.mixin",
   "compatibilityLevel": "JAVA_8",
-  "refmap": "kotlinscript.refmap.json",
+  "refmap": "kotlin_script.refmap.json",
   "mixins": [
   ],
   "client": [
