@@ -190,8 +190,11 @@ public class KeywordHandler {
         try {
             Class<?> clazz = Class.forName(className);
             String simpleName = clazz.getSimpleName();
-            ContextUtils.ClassContext classContext = new ContextUtils.ClassContext(clazz, simpleName,alias, className);
+            ContextUtils.ClassContext classContext = new ContextUtils.ClassContext(clazz, simpleName, alias, className);
             importedClasses.put(alias, classContext);
+            // Store a placeholder or reference in the scope
+            scopeChain.currentScope().defineVariable(alias, classContext, false, ContextUtils.ClassContext.class);
+
             KotlinScript.LOGGER.info("Class imported successfully: " + className + " as " + alias);
         } catch (ClassNotFoundException e) {
             KotlinScript.LOGGER.error("Class not found: " + importStatement, e);

@@ -89,17 +89,17 @@ public class KotlinScriptInterpreter {
         }
     }
     private void executePossibleMethodCall(String line) {
-        if (line.matches("[A-Za-z0-9_]+\\.[A-Za-z0-9_]+\\(.*\\)")) { // Basic regex to check for method calls
+        if (line.matches("[A-Za-z0-9_]+\\.[A-Za-z0-9_]+\\(.*\\)")) {
             try {
                 String alias = line.substring(0, line.indexOf('.'));
                 String methodName = line.substring(line.indexOf('.') + 1, line.indexOf('('));
 
-                // Retrieve the class context using the alias
-                ContextUtils.ClassContext context = importedClasses.get(alias);
-                if (context != null) {
-                    Method method = context.clazz.getMethod(methodName); // Assuming no parameters for simplicity
+                // Retrieve the class context or instance directly from the current scope
+                ContextUtils.ClassContext classContext = (ContextUtils.ClassContext) scopeChain.currentScope().getVariable(alias);
+                if (classContext != null) {
+                    Method method = classContext.clazz.getMethod(methodName);
                     if (java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
-                        Object result = method.invoke(null); // Invoke static method
+                        Object result = method.invoke(null);
                         KotlinScript.LOGGER.info("Method call result: " + (result != null ? result.toString() : "null"));
                     } else {
                         throw new IllegalArgumentException("Method " + methodName + " is not static and cannot be invoked this way.");
@@ -115,4 +115,58 @@ public class KotlinScriptInterpreter {
         }
     }
 
+    private Class<?>[] getParameterTypes(String methodArgs) {
+        if (methodArgs.isEmpty()) {
+            return new Class<?>[0];
+        }
+
+        Object[] args = parseArguments(methodArgs);
+        Class<?>[] parameterTypes = new Class<?>[args.length];
+
+        for (int i = 0; i < args.length; i++) {
+            parameterTypes[i] = args[i].getClass(); // Get the class of each parsed argument
+        }
+
+        return parameterTypes;
+    }
+
+
+    private void handleMethodResult(Method method, Object result, String methodName) {
+        if (method.getReturnType().equals(Void.TYPE)) {
+            KotlinScript.LOGGER.info("Executed void method: " + methodName);
+        } else {
+            // Store result in current scope with a unique result variable name
+            String resultVariableName = methodName + "Result";
+            scopeChain.currentScope().defineVariable(resultVariableName, result, false, method.getReturnType());
+            KotlinScript.LOGGER.info("Stored '" + resultVariableName + "' with value: " + result);
+        }
+    }
+    private Object[] parseArguments(String methodArgs) {
+        if (methodArgs.isEmpty()) {
+            return new Object[0]; // No arguments
+        }
+
+        String[] parts = methodArgs.split(",");
+        Object[] arguments = new Object[parts.length];
+
+        for (int i = 0; i < parts.length; i++) {
+            String arg = parts[i].trim();
+            if (arg.startsWith("\"") && arg.endsWith("\"")) {
+                arguments[i] = arg.substring(1, arg.length() - 1); // String literal
+            } else if (arg.matches("-?\\d+")) {
+                arguments[i] = Integer.parseInt(arg); // Integer
+            } else if (arg.matches("-?\\d*\\.\\d+")) {
+                arguments[i] = Double.parseDouble(arg); // Double
+            } else {
+                // Handle variables and complex types
+                Object value = scopeChain.currentScope().getVariable(arg);
+                if (value != null) {
+                    arguments[i] = value;
+                } else {
+                    throw new RuntimeException("Argument not found in scope: " + arg);
+                }
+            }
+        }
+        return arguments;
+    }
 }
