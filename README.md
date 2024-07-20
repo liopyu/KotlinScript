@@ -1,34 +1,64 @@
-# 🪵 Minecraft Forge ⚒ Kotlin Template 💜
+# Kotlin Script Interpreter for Minecraft Forge 1.20.1
 
-## 🌟 1.20.2 Support 🌟
+Welcome to the Kotlin Script Interpreter for Minecraft Forge 1.20.1! This project enables you to write scripts in Kotlin (.kts files) and have them translated to Java, enhancing your Minecraft modding experience.
 
-| INCLUDED       | INFO                                            |
-|----------------|-------------------------------------------------|
-| KotlinForForge | https://github.com/thedarkcolour/KotlinForForge |
-| ParchmentMC    | https://github.com/ParchmentMC                  |
-| Kotlin         | https://kotlinlang.org                          |
+## Features
 
-## 🛠️ Getting Started 🛠️
+| **Write in Kotlin**                                                                                                    | **Translate to Java**                                                                                                    | **Scope Management**                                                                                                | **Error Reporting**                                                                                                  | **Logging**                                                                                                          |
+|------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------|
+| Write your scripts using the powerful Kotlin language.                                                                 | Automatically translates Kotlin scripts to Java for seamless integration with Minecraft Forge.                            | Advanced scope management to handle variable declarations and more.                                                  | Detailed error messages to help you debug your scripts.                                                              | Provides feedback on script execution through the logger.                                                            |
 
-| 1. Gradle Tasks -> forgegradle runs <br/>-> `gen<your IDE>Runs`                                                                          | 2. Run `runClient` <br/>in your IDE's Run / Debug Configuration                                                                                                                                                                                                                                                                                                  |
-|------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| <div align="center">![genRunConfig](https://cdn.discordapp.com/attachments/1072301775606001744/1088421409967050833/image.png)</div>      | <div align="center">![runClient](https://cdn.discordapp.com/attachments/1072301775606001744/1088424141801140244/image.png)</div>                                                                                                                                                                                                                                 |
-| <div align="center"> HotSwap in debug mode [LEARN MORE](https://forge.gemwire.uk/wiki/Hotswap)</div>                                     | <div align="center">Useful References</div>                                                                                                                                                                                                                                                                                                                      |
-| <div align="center"><img width=350 src="https://cdn.discordapp.com/attachments/1072301775606001744/1088424637542703205/image.png"></div> | <div align="center"><a href="https://forge.gemwire.uk/wiki/Main_Page"><img width=260 src="https://cdn.discordapp.com/attachments/1072301775606001744/1088426016495644752/image.png"></a><br/><a href="https://docs.minecraftforge.net/en/1.19.x/"><img src="https://cdn.discordapp.com/attachments/1072301775606001744/1088426119876845578/image.png"></a></div> |
 
-## ⚙️ Features ⚙️
+## Getting Started
 
-- Initialization
-    - [Item](./src/main/kotlin/init/ItemRegistry.kt),
-      [Block](./src/main/kotlin/init/BlockRegistry.kt) -
-      [BlockItem](./src/main/kotlin/init/BlockItemRegistry.kt)
-- Examples
-    - [Example Item](./src/main/kotlin/items/SadObsidianMaker.kt)
-    - [Example Block](./src/main/kotlin/blocks/ExampleBlock.kt)
-    - [Example Creative Tab](./src/main/kotlin/creativetabs/ExampleCreativeModTab.kt)
-    - [KeyBinds](./src/main/kotlin/keybind/KeyBinds.kt) ㅡ
-      [Handler](./src/main/kotlin/keybind/KeyBindHandler.kt)
-- Mixin
-    - [General Mixin Example (Java)](./src/main/java/mixin/ExampleMixin.java)
-    - [Mixin Kotlin Binding](./src/main/java/mixin/bindings/ExampleBindingMixin.java)
-      ㅡ [actually executed function](./src/main/kotlin/mixinkt/ExampleMixinBinding.kt)
+### Prerequisites
+
+- Minecraft Forge 1.20.1
+- Java Development Kit (JDK) 8 or higher
+
+### Usage
+
+1. Create a `.kts` file in the `run/scripts` folder of your Minecraft directory. For example, `example.kts`:
+    ```kotlin
+   import net.liopyu.kotlinscript.TestClass as TClass // Optionally import classes as an alias
+   TClass().instancedExecute() // Instantiated method calls
+   var variable = TClass.execute() // TClass.execute() is a void method which logs a message to console
+   variable // Call/execute the method
+   var variable2 = "first assigned variable"
+   {
+      // Re-assign in a scope
+      variable2 = "new variable"
+      {
+         variable2 = "newest variable"
+         print(variable2) // Console logs "newest variable"
+      }
+   }
+    ```
+
+2. Start Minecraft. The interpreter will automatically load and execute the scripts from the `scripts` folder.
+
+### Classes Overview
+
+| **Class**                  | **Description**                                                                                                                                                                                                                   |
+|----------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `KotlinScript`             | Initializes a script interpreter to load and execute Kotlin scripts from a folder.                                                                                                                                                |
+| `KotlinScriptInterpreter`  | Loads `.kts` files, interprets the scripts line by line, and handles commands such as variable declarations, method invocations, and imports. Manages variable scopes using `ScopeChain` and processes keywords using `KeywordHandler`. |
+| `Scope`                    | Manages variable declarations, immutability, and type storage within a particular scope. Handles variable inheritance from parent scopes and checks against modifications of immutable variables.                                     |
+| `ScopeChain`               | Manages a stack of `Scope` objects, allowing for entering and exiting of scopes. Maintains a global scope and manages nested scopes.                                                                                                 |
+| `KotlinScriptHelperClass`  | Manages keywords used in Kotlin script files, defining and recognizing keywords such as `val`, `var`, `print`, and `import`.                                                                                                       |
+| `ContextUtils`             | Handles storing information about classes, such as their Java class object, simple name, alias, and full class name. Facilitates dynamic interaction with classes within the scripting environment.                                 |
+
+## Contributing
+
+We welcome contributions! Please fork the repository and submit pull requests.
+
+1. Fork the repository.
+2. Create a new branch (`git checkout -b feature-branch`).
+3. Make your changes.
+4. Commit your changes (`git commit -am 'Add new feature'`).
+5. Push to the branch (`git push origin feature-branch`).
+6. Create a new Pull Request.
+
+## License
+
+This project is licensed under the GNU General Public License v3.0. See the `LICENSE` file for more details.

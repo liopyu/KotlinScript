@@ -18,7 +18,7 @@ public class KotlinScript {
     public static final Map<String, KotlinScriptInterpreter> interpreterMap = new HashMap<>();
 
     public KotlinScript() throws FileNotFoundException {
-        String scriptFolderPath = "data/scripts";
+        String scriptFolderPath = "scripts";
         scriptInterpreter = new KotlinScriptInterpreter(scriptFolderPath);
         scriptInterpreter.loadScriptsFromFolder();
         scriptInterpreter.interpretKotlinScripts();
