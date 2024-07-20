@@ -120,7 +120,7 @@ public class KotlinScriptInterpreter {
                 KotlinScript.LOGGER.info("Command or variable not executed: " + line);
             }
         } else if (line.startsWith("{")) {
-            keywordHandler.handleNewScope(scanner); // Recursive handling of new scope
+            keywordHandler.handleNewScope(scanner,line); // Recursive handling of new scope
         } else {
             // Handle possible class method invocation or variable assignment if not a simple keyword or variable execution
             handleAssignmentOrMethodCall(line);

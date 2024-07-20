@@ -22,13 +22,31 @@ public class KeywordHandler {
         this.scopeChain = scopeChain;
     }
 
-    public void handleNewScope(Scanner scanner) throws FileNotFoundException {
+    public void handleNewScope(Scanner scanner,String line) throws FileNotFoundException {
         scopeChain.enterScope();
         try {
+            int firstBraceIndex = line.indexOf('{');
+
+            // Handle any inline code immediately after the opening brace
+            if (firstBraceIndex != -1) {
+                String inlineCodeAfterBrace = line.substring(firstBraceIndex + 1).trim();
+                if (!inlineCodeAfterBrace.isEmpty()) {
+                    // There might be executable code directly after '{'
+                    interpretInlineCode(inlineCodeAfterBrace, scanner);
+                }
+            }
+
             while (scanner.hasNextLine()) {
                 String nextLine = scanner.nextLine().trim();
                 if (nextLine.equals("}")) {
-                    break; // Exit the loop on closing bracket
+                    break; // Exit the loop on a standalone closing bracket
+                } else if (nextLine.startsWith("}")) {
+                    // Handle inline code before a closing brace
+                    String inlineCodeBeforeBrace = nextLine.substring(1).trim();
+                    if (!inlineCodeBeforeBrace.isEmpty()) {
+                        interpretLine(inlineCodeBeforeBrace, scanner);
+                    }
+                    break;
                 } else if (!nextLine.isEmpty() && !nextLine.startsWith("//")) {
                     interpretLine(nextLine, scanner); // Recursively process each line within the new scope
                 }
@@ -37,6 +55,17 @@ public class KeywordHandler {
             scopeChain.exitScope(); // Ensure the scope is always exited
         }
     }
+
+    private void interpretInlineCode(String code, Scanner scanner) throws FileNotFoundException {
+        // Split by semicolons if multiple statements are on one line after the opening brace
+        String[] statements = code.split(";");
+        for (String statement : statements) {
+            if (!statement.trim().isEmpty()) {
+                interpretLine(statement.trim(), scanner);
+            }
+        }
+    }
+
 
     public boolean executeVariable(String variableName) {
         Object value = scopeChain.currentScope().getVariable(variableName);
@@ -92,7 +121,7 @@ public class KeywordHandler {
                 KotlinScript.LOGGER.info("Command or variable not executed: " + line);
             }
         } else if (line.startsWith("{")) {
-            this.handleNewScope(scanner); // Recursive handling of new scope
+            this.handleNewScope(scanner,line); // Recursive handling of new scope
         } else {
             // Handle possible class method invocation or variable assignment if not a simple keyword or variable execution
             handleAssignmentOrMethodCall(line);
@@ -438,7 +467,7 @@ public class KeywordHandler {
 
         Consumer<Scope> function = currentScope -> {
             try {
-                interpretFunctionBody(functionBody.toString().trim(), currentScope);
+                interpretFunctionBody(functionBody.toString().trim(), line);
             } catch (FileNotFoundException e) {
                 throw new RuntimeException(e);
             }
@@ -462,9 +491,9 @@ public class KeywordHandler {
         }
     }
 
-    public void interpretFunctionBody(String functionBody, Scope scope) throws FileNotFoundException {
+    public void interpretFunctionBody(String functionBody, String line) throws FileNotFoundException {
         try (Scanner scanner = new Scanner(functionBody)) {
-            this.handleNewScope(scanner);
+            this.handleNewScope(scanner,line);
         }
     }
 
