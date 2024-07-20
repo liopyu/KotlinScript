@@ -366,69 +366,81 @@ public class KeywordHandler {
             KotlinScript.LOGGER.error("Class not found: " + importStatement, e);
         }
     }
-    public void handleFunctionDefinition(String line, Scanner scanner) {
-        // Extract function name from the line, assuming correct syntax up to '('
+    public void handleFunctionDefinition(String line, Scanner scanner) throws FileNotFoundException {
+        StringBuilder functionDeclaration = new StringBuilder(line.trim());
+        while (!functionDeclaration.toString().endsWith("{") && scanner.hasNextLine()) {
+            functionDeclaration.append(" ").append(scanner.nextLine().trim());
+        }
+
+        // Extract the function name and parameters from the declaration
+        String functionDeclarationStr = functionDeclaration.toString();
+        int openingBraceIndex = functionDeclarationStr.indexOf('{');
+        if (openingBraceIndex == -1) {
+            throw new RuntimeException("Syntax error: Function definition missing '{'.");
+        }
+
+        String functionHeader = functionDeclarationStr.substring(0, openingBraceIndex).trim();
+        String inlineCode = functionDeclarationStr.substring(openingBraceIndex + 1).trim();
+
         int functionNameStart = 4; // Skip the "fun " part
-        int functionNameEnd = line.indexOf('(');
+        int functionNameEnd = functionHeader.indexOf('(');
         if (functionNameEnd == -1) {
-            throw new RuntimeException("Syntax error in pattern3: Function definition missing '('.");
+            throw new RuntimeException("Syntax error: Function definition missing '('.");
         }
-        String functionName = line.substring(functionNameStart, functionNameEnd).trim();
+        String functionName = functionHeader.substring(functionNameStart, functionNameEnd).trim();
 
-        // Check for closing parenthesis ')'
-        int paramsEnd = line.indexOf(')', functionNameEnd);
+        int paramsEnd = functionHeader.indexOf(')', functionNameEnd);
         if (paramsEnd == -1) {
-            throw new RuntimeException("Syntax error in pattern3: Function definition missing ')'.");
+            throw new RuntimeException("Syntax error: Function definition missing ')'.");
         }
-
-        // Move to the position after the closing parenthesis
-        int braceStart = paramsEnd + 1;
-
-        // Check if there is any text between the closing parenthesis and the opening brace
-        while (braceStart < line.length() && Character.isWhitespace(line.charAt(braceStart))) {
-            braceStart++;
-        }
-
-        // Check for the opening brace '{'
-        if (braceStart >= line.length() || line.charAt(braceStart) != '{') {
-            throw new RuntimeException("Syntax error in pattern3: Function definition must be followed by '{'");
-        }
-        braceStart++; // Move past the '{'
-
-        scanner.useDelimiter(""); // Change delimiter to consume character by character
 
         // Initialize function body capturing
         StringBuilder functionBody = new StringBuilder();
-        int braceDepth = 1;
+        int braceDepth = 1; // Start with 1 because we have encountered the opening '{'
         boolean inString = false;
         char stringChar = '\0';
 
-        while (scanner.hasNext() && braceDepth > 0) {
-            char nextChar = scanner.next().charAt(0);
-            functionBody.append(nextChar);
-
-            if (inString) {
-                if (nextChar == stringChar) {
-                    inString = false;
+        if (!inlineCode.isEmpty()) {
+            for (char nextChar : inlineCode.toCharArray()) {
+                functionBody.append(nextChar);
+                if (nextChar == '{') {
+                    braceDepth++;
+                } else if (nextChar == '}') {
+                    braceDepth--;
                 }
-                continue;
             }
+            functionBody.append("\n");
+        }
 
-            if (nextChar == '"' || nextChar == '\'') {
-                inString = true;
-                stringChar = nextChar;
-                continue;
+        while (scanner.hasNext() && braceDepth > 0) {
+            String nextLine = scanner.nextLine();
+            for (char nextChar : nextLine.toCharArray()) {
+                functionBody.append(nextChar);
+                if (inString) {
+                    if (nextChar == stringChar) {
+                        inString = false;
+                    }
+                    continue;
+                }
+                if (nextChar == '"' || nextChar == '\'') {
+                    inString = true;
+                    stringChar = nextChar;
+                    continue;
+                }
+                if (nextChar == '{') {
+                    braceDepth++;
+                } else if (nextChar == '}') {
+                    braceDepth--;
+                    if (braceDepth == 0) {
+                        break;
+                    }
+                }
             }
-
-            if (nextChar == '{') {
-                braceDepth++;
-            } else if (nextChar == '}') {
-                braceDepth--;
-            }
+            functionBody.append("\n");
         }
 
         if (braceDepth != 0) {
-            throw new RuntimeException("Syntax error in pattern3: Mismatched braces in function definition.");
+            throw new RuntimeException("Syntax error: Mismatched braces in function definition.");
         }
 
         // Define and store the function in the current scope
@@ -441,6 +453,10 @@ public class KeywordHandler {
         };
         scopeChain.currentScope().defineFunction(functionName, function);
     }
+
+
+
+
 
     public void executeFunction(String functionName) {
         Consumer<Scope> function = scopeChain.currentScope().getFunction(functionName);
@@ -457,9 +473,64 @@ public class KeywordHandler {
         }
     }
 
-    public void interpretFunctionBody(String functionBody, Scope scope) throws FileNotFoundException {
-        try (Scanner scanner = new Scanner(functionBody)) {
-            this.handleNewScope(scanner);
+    public void interpretFunctionBody(String functionBody, Scope currentScope) throws FileNotFoundException {
+        Scanner scanner = new Scanner(functionBody);
+        StringBuilder currentLine = new StringBuilder();
+        int braceDepth = 0;
+
+        while (scanner.hasNextLine()) {
+            String line = scanner.nextLine().trim();
+            KotlinScript.LOGGER.info("Processing line: " + line);
+
+            int openBraceIndex = line.indexOf('{');
+            int closeBraceIndex = line.indexOf('}');
+
+            while (openBraceIndex != -1 || closeBraceIndex != -1) {
+                if (openBraceIndex != -1 && (closeBraceIndex == -1 || openBraceIndex < closeBraceIndex)) {
+                    // There is an opening brace before any closing brace
+                    String beforeBrace = line.substring(0, openBraceIndex).trim();
+                    if (!beforeBrace.isEmpty()) {
+                        currentLine.append(beforeBrace);
+                        KotlinScript.LOGGER.info("Before brace: " + beforeBrace);
+                        interpretLine(currentLine.toString(), scanner);
+                        currentLine.setLength(0); // Clear the StringBuilder
+                    }
+                    KotlinScript.LOGGER.info("Interpreting opening brace");
+                    interpretLine("{", scanner);
+                    braceDepth++;
+                    line = line.substring(openBraceIndex + 1).trim();
+                } else {
+                    // There is a closing brace before any opening brace
+                    String beforeBrace = line.substring(0, closeBraceIndex).trim();
+                    if (!beforeBrace.isEmpty()) {
+                        currentLine.append(beforeBrace);
+                        KotlinScript.LOGGER.info("Before brace: " + beforeBrace);
+                        interpretLine(currentLine.toString(), scanner);
+                        currentLine.setLength(0); // Clear the StringBuilder
+                    }
+                    braceDepth--;
+                    KotlinScript.LOGGER.info("Interpreting closing brace");
+                    if (braceDepth == 0) {
+                        interpretLine("}", scanner);
+                        return; // End of function body
+                    }
+                    line = line.substring(closeBraceIndex + 1).trim();
+                }
+                openBraceIndex = line.indexOf('{');
+                closeBraceIndex = line.indexOf('}');
+            }
+
+            if (!line.isEmpty()) {
+                currentLine.append(line);
+                KotlinScript.LOGGER.info("Remaining line: " + line);
+                interpretLine(currentLine.toString(), scanner);
+                currentLine.setLength(0); // Clear the StringBuilder
+            }
+        }
+
+        if (braceDepth != 0) {
+            KotlinScript.LOGGER.error("Syntax error: Mismatched braces in function definition.");
+            throw new RuntimeException("Syntax error: Mismatched braces in function definition.");
         }
     }
 

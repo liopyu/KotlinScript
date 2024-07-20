@@ -12,12 +12,12 @@ for (s in pattern2) {
 /*
 if (){
 }*/
-var pattern = "stored variable"
-print(pattern)
-fun pattern2() {
-    print("stored function")
-}
-pattern2()
+
+fun pattern()
+{
+
+
+    print("test function")}
 /*
 {
      // Re-assign in a scope
