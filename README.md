@@ -1,6 +1,7 @@
-# Kotlin Script Interpreter for Minecraft Forge 1.20.1
+# Kotlin Script
 
-Welcome to the Kotlin Script Interpreter for Minecraft Forge 1.20.1! This project enables you to write scripts in Kotlin (.kts files) and have them translated to Java, enhancing your Minecraft modding experience.
+Welcome to the Kotlin Script, a kotlin script to Java interpreter!
+This project enables you to write scripts in Kotlin (.kts files) and have them translated to Java, soon to be personalized for use in minecraft.
 
 ## Features
 
@@ -48,16 +49,6 @@ Welcome to the Kotlin Script Interpreter for Minecraft Forge 1.20.1! This projec
 | `KotlinScriptHelperClass`  | Manages keywords used in Kotlin script files, defining and recognizing keywords such as `val`, `var`, `print`, and `import`.                                                                                                       |
 | `ContextUtils`             | Handles storing information about classes, such as their Java class object, simple name, alias, and full class name. Facilitates dynamic interaction with classes within the scripting environment.                                 |
 
-## Contributing
-
-We welcome contributions! Please fork the repository and submit pull requests.
-
-1. Fork the repository.
-2. Create a new branch (`git checkout -b feature-branch`).
-3. Make your changes.
-4. Commit your changes (`git commit -am 'Add new feature'`).
-5. Push to the branch (`git push origin feature-branch`).
-6. Create a new Pull Request.
 
 ## License
 
