@@ -14,15 +14,23 @@ public class Scope {
         this.immutabilityMap = new HashMap<>();
         this.variableTypes = new HashMap<>();
     }
-
-    public void defineVariable(String name, Object value, boolean isImmutable, Class<?> type) {
+    public boolean isVariableDefined(String name) {
         if (variables.containsKey(name)) {
-            throw new RuntimeException("Variable " + name + " already defined in this scope");
+            return true;  // Found in the current scope
+        } else if (parent != null) {
+            return parent.isVariableDefined(name);  // Recursively check in parent scopes
+        }
+        return false;  // Not found in any scope
+    }
+    public void defineVariable(String name, Object value, boolean isImmutable, Class<?> type) {
+        if (isVariableDefined(name)) {
+            throw new RuntimeException("Variable '" + name + "' already defined in this or a parent scope");
         }
         variables.put(name, value);
         immutabilityMap.put(name, isImmutable);
-        variableTypes.put(name, type); // Store the type of the variable
+        variableTypes.put(name, type);
     }
+
     public Object getVariable(String name) {
         if (variables.containsKey(name)) {
             return variables.get(name);
@@ -32,7 +40,14 @@ public class Scope {
             throw new RuntimeException("Variable not found: " + name);
         }
     }
-
+    public boolean hasVariable(String name) {
+        if (variables.containsKey(name)) {
+            return true;
+        } else if (parent != null) {
+            return parent.hasVariable(name); // Recursively check parent scopes
+        }
+        return false;
+    }
     public Class<?> getVariableType(String name) {
         if (variableTypes.containsKey(name)) {
             return variableTypes.get(name);

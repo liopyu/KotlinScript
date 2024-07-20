@@ -1,10 +1,18 @@
 package net.liopyu.kotlinscript;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Scanner;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import static net.liopyu.kotlinscript.KotlinScript.interpreterMap;
 
 public class KeywordHandler {
     private final ScopeChain scopeChain;
@@ -13,31 +21,181 @@ public class KeywordHandler {
         this.scopeChain = scopeChain;
     }
 
+    public void handleNewScope(Scanner scanner) throws FileNotFoundException {
+        scopeChain.enterScope();
+        try {
+            while (scanner.hasNextLine()) {
+                String nextLine = scanner.nextLine().trim();
+                if (nextLine.equals("}")) {
+                    break; // Exit the loop on closing bracket
+                } else if (!nextLine.isEmpty() && !nextLine.startsWith("//")) {
+                    interpretLine(nextLine, scanner); // Recursively process each line within the new scope
+                }
+            }
+        } finally {
+            scopeChain.exitScope(); // Ensure the scope is always exited
+        }
+    }
+
+    public boolean executeVariable(String variableName) {
+        Object value = scopeChain.currentScope().getVariable(variableName);
+        if (value instanceof ContextUtils.MethodReferenceContext) {
+            try {
+                ((ContextUtils.MethodReferenceContext) value).invoke();
+                return true;
+            } catch (Exception e) {
+                KotlinScript.LOGGER.error("Error invoking method for variable: " + variableName, e);
+                return false;
+            }
+        } else {
+            KotlinScript.LOGGER.info("Variable value: " + value);
+            return false;
+        }
+    }
+    public void interpretLine(String line, Scanner scanner) throws FileNotFoundException {
+        // Trim the line and remove the portion after any comment markers.
+        int commentIndex = line.indexOf("//");
+        if (commentIndex != -1) {
+            line = line.substring(0, commentIndex).trim(); // Trim after cutting off the comment.
+        }
+
+        // Proceed only if the line is not empty after removing comments.
+        if (line.isEmpty()) {
+            return;
+        }
+
+        if (KotlinScriptHelperClass.isKeyWord(line)) {
+            String keyword = KotlinScriptHelperClass.getKeyWord(line);
+            switch (keyword) {
+                case "val":
+                case "var":
+                    this.handleDeclaration(line);
+                    break;
+                case "print":
+                    this.handlePrint(line);
+                    break;
+                case "import":
+                    this.importClass(line);
+                    break;
+                default:
+                    KotlinScript.LOGGER.error("Unhandled keyword: " + keyword);
+            }
+        } else if (line.matches("\\w+")) {
+            if (!executeVariable(line)) {  // Attempt to execute if it's a single word that might be a variable/method.
+                KotlinScript.LOGGER.info("Command or variable not executed: " + line);
+            }
+        } else if (line.startsWith("{")) {
+            this.handleNewScope(scanner); // Recursive handling of new scope
+        } else {
+            // Handle possible class method invocation or variable assignment if not a simple keyword or variable execution
+            handleAssignmentOrMethodCall(line);
+        }
+    }
+
+    private void handleAssignmentOrMethodCall(String line) {
+        if (line.contains("=")) {
+            String[] parts = line.split("=", 2);
+            String variableName = parts[0].trim();
+            String valueExpression = parts[1].trim();
+
+            if (scopeChain.currentScope().hasVariable(variableName)) {
+                // Evaluate the expression (can be a direct value or another variable)
+                Object value = evaluateExpression(valueExpression,scopeChain.currentScope());
+                scopeChain.currentScope().setVariable(variableName, value);
+                KotlinScript.LOGGER.info("Variable updated: " + variableName + " = " + value);
+            } else {
+                KotlinScript.LOGGER.error("Unrecognized command: " + line);
+            }
+        } else {
+            // Assume it's a method call if no '=' is present
+            executePossibleMethodCall(line);
+        }
+    }
+    private Object evaluateExpression(String expr, Scope scope) {
+        try {
+            // Check if the expression is a method call
+            if (expr.matches("[A-Za-z0-9_]+\\.[A-Za-z0-9_]+\\(.*\\)")) {
+                // This pattern assumes a simple method call like ClassName.methodName()
+                String className = expr.substring(0, expr.indexOf('.'));
+                String methodName = expr.substring(expr.indexOf('.') + 1, expr.indexOf('('));
+                ContextUtils.ClassContext classContext = importedClasses.get(className);
+                if (classContext != null) {
+                    Method method = classContext.clazz.getMethod(methodName);
+                    if (java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
+                        Object result = method.invoke(null);
+                        if (method.getReturnType().equals(Void.TYPE)) {
+                            // For void methods, return a placeholder or null
+                            return "Void Method Placeholder";
+                        }
+                        return result;
+                    }
+                }
+            } else if (expr.startsWith("\"") && expr.endsWith("\"")) {
+                return expr.substring(1, expr.length() - 1);  // Handle string literals
+            } else if (expr.matches("-?\\d+(\\.\\d+)?")) {
+                return Double.parseDouble(expr);  // Handle numeric values
+            } else if (scope.hasVariable(expr)) {
+                return scope.getVariable(expr);  // Retrieve value of an existing variable
+            }
+        } catch (Exception e) {
+            KotlinScript.LOGGER.error("Failed to evaluate expression: " + expr, e);
+        }
+        throw new IllegalArgumentException("Expression could not be evaluated: " + expr);
+    }
+
+
+    private void executePossibleMethodCall(String line) {
+        if (line.matches("[A-Za-z0-9_]+\\.[A-Za-z0-9_]+\\(.*\\)")) {
+            try {
+                String alias = line.substring(0, line.indexOf('.'));
+                String methodName = line.substring(line.indexOf('.') + 1, line.indexOf('('));
+
+                // Retrieve the class context or instance directly from the current scope
+                ContextUtils.ClassContext classContext = (ContextUtils.ClassContext) scopeChain.currentScope().getVariable(alias);
+                if (classContext != null) {
+                    Method method = classContext.clazz.getMethod(methodName);
+                    if (java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
+                        Object result = method.invoke(null);
+                        KotlinScript.LOGGER.info("Method call result: " + (result != null ? result.toString() : "null"));
+                    } else {
+                        throw new IllegalArgumentException("Method " + methodName + " is not static and cannot be invoked this way.");
+                    }
+                } else {
+                    throw new IllegalArgumentException("Class not found for alias: " + alias);
+                }
+            } catch (Exception e) {
+                KotlinScript.LOGGER.error("Error executing method call: " + line, e);
+            }
+        } else {
+            KotlinScript.LOGGER.error("Unrecognized command: " + line);
+        }
+    }
+
     public void handleDeclaration(String line) {
         String[] parts = line.split("=", 2);
         String declarationPart = parts[0].trim();
-        String valuePart = parts[1].trim();
+        String valuePart = parts.length > 1 ? parts[1].trim() : "";
         String[] declarationParts = declarationPart.split("\\s+");
 
         String variableName = declarationParts[1].trim();
         Object value;
-        Class<?> valueType; // Type of the value
-        try {
-            if (valuePart.startsWith("\"") && valuePart.endsWith("\"")) {
-                value = valuePart.substring(1, valuePart.length() - 1); // String literal
-                valueType = String.class;
-            } else {
-                value = evaluateExpression(valuePart);
-                valueType = value.getClass(); // Determine the class of the value
-            }
-        } catch (RuntimeException e) {
-            KotlinScript.LOGGER.error("Error evaluating expression: " + valuePart, e);
-            return;
-        }
 
-        boolean isImmutable = declarationParts[0].equals("val");
-        scopeChain.currentScope().defineVariable(variableName, value, isImmutable, valueType);
+        try {
+            if (valuePart.matches("[A-Za-z0-9_]+\\.[A-Za-z0-9_]+\\(\\)")) {  // Check for method call pattern
+                String className = valuePart.substring(0, valuePart.indexOf('.'));
+                String methodName = valuePart.substring(valuePart.indexOf('.') + 1, valuePart.indexOf('('));
+                Class<?> clazz = importedClasses.get(className).clazz;
+                value = new ContextUtils.MethodReferenceContext(clazz, methodName);
+            } else {
+                value = evaluateExpression(valuePart, scopeChain.currentScope());
+            }
+            scopeChain.currentScope().defineVariable(variableName, value, declarationParts[0].equals("val"), value.getClass());
+        } catch (RuntimeException e) {
+            KotlinScript.LOGGER.error("Error handling declaration: " + line, e);
+        }
     }
+
+
 
     public void handlePrint(String line) {
         // Remove the 'print(' prefix and the ')' suffix
@@ -192,6 +350,7 @@ public class KeywordHandler {
             String simpleName = clazz.getSimpleName();
             ContextUtils.ClassContext classContext = new ContextUtils.ClassContext(clazz, simpleName, alias, className);
             importedClasses.put(alias, classContext);
+
             // Store a placeholder or reference in the scope
             scopeChain.currentScope().defineVariable(alias, classContext, false, ContextUtils.ClassContext.class);
 
@@ -203,14 +362,5 @@ public class KeywordHandler {
 
 
 
-    private Object evaluateExpression(String expr) {
-        if (expr.startsWith("\"") && expr.endsWith("\"")) {
-            return expr.substring(1, expr.length() - 1);  // Remove quotes for string literals
-        } else if (expr.contains(".")) {  // Likely a method call
-            return evaluateMethodCall(expr);
-        } else {
-            return scopeChain.currentScope().getVariable(expr);  // Treat as a variable name
-        }
-    }
 
 }
