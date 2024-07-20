@@ -52,7 +52,142 @@ public class KeywordHandler {
             scopeChain.exitScope(); // Ensure the scope is always exited
         }
     }
+    public void handleIfStatements(String line, Scanner scanner) throws FileNotFoundException {
+        KotlinScript.LOGGER.info("Entering handleIfStatements with line: " + line);
 
+        // Extract the condition part from the if statement
+        int conditionStart = line.indexOf('(');
+        int conditionEnd = line.indexOf(')', conditionStart);
+        if (conditionStart == -1 || conditionEnd == -1) {
+            throw new RuntimeException("Syntax error: Invalid if statement syntax.");
+        }
+        String condition = line.substring(conditionStart + 1, conditionEnd).trim();
+
+        // Evaluate the condition
+        boolean conditionResult = evaluateCondition(condition);
+        KotlinScript.LOGGER.info("Condition evaluated to: " + conditionResult);
+
+        // Find the opening brace for the if statement block
+        int braceIndex = line.indexOf('{', conditionEnd);
+        if (braceIndex == -1) {
+            // If the opening brace is not on the same line, find it in subsequent lines
+            while (scanner.hasNextLine()) {
+                line = scanner.nextLine().trim();
+                braceIndex = line.indexOf('{');
+                if (braceIndex != -1) {
+                    break;
+                }
+            }
+        }
+
+        if (braceIndex == -1) {
+            throw new RuntimeException("Syntax error: Missing opening brace for if statement block.");
+        }
+
+        // Process the if statement block
+        StringBuilder blockContent = new StringBuilder();
+        int braceDepth = 1;
+        boolean inString = false;
+        char stringChar = '\0';
+
+        while (scanner.hasNext() && braceDepth > 0) {
+            String nextLine = scanner.nextLine().trim();
+            for (char nextChar : nextLine.toCharArray()) {
+                blockContent.append(nextChar);
+                if (inString) {
+                    if (nextChar == stringChar) {
+                        inString = false;
+                    }
+                    continue;
+                }
+                if (nextChar == '"' || nextChar == '\'') {
+                    inString = true;
+                    stringChar = nextChar;
+                    continue;
+                }
+                if (nextChar == '{') {
+                    braceDepth++;
+                } else if (nextChar == '}') {
+                    braceDepth--;
+                    if (braceDepth == 0) {
+                        break;
+                    }
+                }
+            }
+            blockContent.append("\n");
+        }
+
+        if (braceDepth != 0) {
+            throw new RuntimeException("Syntax error: Mismatched braces in if statement block.");
+        }
+
+        if (conditionResult) {
+            KotlinScript.LOGGER.info("Executing if block");
+            interpretBlockContent(blockContent.toString().trim());
+        } else {
+            String remainingLine = line.substring(braceIndex -1).trim();
+            String remainingLine2 = line.substring(braceIndex).trim();
+            KotlinScript.LOGGER.info("Handling possible else block: " + remainingLine);
+            KotlinScript.LOGGER.info("Handling possible else block: " + remainingLine2);
+            // After processing the if block, check for an else block on the same line
+
+            if (remainingLine.startsWith("else")) {
+                KotlinScript.LOGGER.info("Else block found on the same line");
+                handleElseBlock(scanner, remainingLine);
+            } else {
+                // Check the next lines for an else statement
+                while (scanner.hasNextLine()) {
+                    String nextLine = scanner.nextLine().trim();
+                    if (nextLine.startsWith("else")) {
+                        KotlinScript.LOGGER.info("Else block found on the next line");
+                        handleElseBlock(scanner, nextLine);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    private void handleElseBlock(Scanner scanner, String line) throws FileNotFoundException {
+        KotlinScript.LOGGER.info("Entering handleElseBlock with line: " + line);
+
+        // Find the opening brace for the else statement block
+        int braceIndex = line.indexOf('{');
+        if (braceIndex == -1) {
+            // If the opening brace is not on the same line, find it in subsequent lines
+            while (scanner.hasNextLine()) {
+                line = scanner.nextLine().trim();
+                braceIndex = line.indexOf('{');
+                if (braceIndex != -1) {
+                    break;
+                }
+            }
+        }
+
+        if (braceIndex == -1) {
+            throw new RuntimeException("Syntax error: Missing opening brace for else statement block.");
+        }
+
+        // Process the else statement block using handleNewScope
+        KotlinScript.LOGGER.info("Processing else block using handleNewScope");
+        handleNewScope(scanner, line.substring(braceIndex));
+    }
+    private void interpretBlockContent(String blockContent) throws FileNotFoundException {
+        try (Scanner blockScanner = new Scanner(blockContent)) {
+            while (blockScanner.hasNextLine()) {
+                interpretLine(blockScanner.nextLine().trim(), blockScanner);
+            }
+        }
+    }
+    private boolean evaluateCondition(String condition) {
+        // Simple condition evaluation (can be extended for complex conditions)
+        // Here, we assume condition is a variable name for simplicity
+        Object value = scopeChain.currentScope().getVariable(condition);
+        if (value instanceof Boolean) {
+            return (Boolean) value;
+        }
+        throw new RuntimeException("Invalid condition: " + condition);
+    }
     private void interpretInlineCode(String code, Scanner scanner) throws FileNotFoundException {
         // Split by semicolons if multiple statements are on one line after the opening brace
         String[] statements = code.split(";");
@@ -62,7 +197,6 @@ public class KeywordHandler {
             }
         }
     }
-
 
     public boolean executeVariable(String variableName) {
         Object value = scopeChain.currentScope().getVariable(variableName);
@@ -104,6 +238,9 @@ public class KeywordHandler {
                 case "fun":
                     this.handleFunctionDefinition(line, scanner);
                     break;
+                case "if":
+                    this.handleIfStatements(line, scanner);
+                    break;
                 default:
                     KotlinScript.LOGGER.error("Unhandled keyword: " + keyword);
             }
@@ -121,6 +258,7 @@ public class KeywordHandler {
             handleAssignmentOrMethodCall(line);
         }
     }
+
     public boolean handleComments(String line,Scanner scanner) {
         if (line.isEmpty()) {
             return true;
@@ -150,44 +288,14 @@ public class KeywordHandler {
                 scopeChain.currentScope().setVariable(variableName, value);
                 KotlinScript.LOGGER.info("Variable updated: " + variableName + " = " + value);
             } else {
-                KotlinScript.LOGGER.error("Unrecognized command: " + line);
+                KotlinScript.LOGGER.error("Unrecognized command 2: " + line);
             }
         } else {
             // Assume it's a method call if no '=' is present
             executePossibleMethodCall(line);
         }
     }
-    private Object evaluateExpression(String expr, Scope scope) {
-        try {
-            // Check if the expression is a method call
-            if (expr.matches("[A-Za-z0-9_]+\\.[A-Za-z0-9_]+\\(.*\\)")) {
-                // This pattern assumes a simple method call like ClassName.methodName()
-                String className = expr.substring(0, expr.indexOf('.'));
-                String methodName = expr.substring(expr.indexOf('.') + 1, expr.indexOf('('));
-                ContextUtils.ClassContext classContext = importedClasses.get(className);
-                if (classContext != null) {
-                    Method method = classContext.clazz.getMethod(methodName);
-                    if (java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
-                        Object result = method.invoke(null);
-                        if (method.getReturnType().equals(Void.TYPE)) {
-                            // For void methods, return a placeholder or null
-                            return "Void Method Placeholder";
-                        }
-                        return result;
-                    }
-                }
-            } else if (expr.startsWith("\"") && expr.endsWith("\"")) {
-                return expr.substring(1, expr.length() - 1);  // Handle string literals
-            } else if (expr.matches("-?\\d+(\\.\\d+)?")) {
-                return Double.parseDouble(expr);  // Handle numeric values
-            } else if (scope.hasVariable(expr)) {
-                return scope.getVariable(expr);  // Retrieve value of an existing variable
-            }
-        } catch (Exception e) {
-            KotlinScript.LOGGER.error("Failed to evaluate expression: " + expr, e);
-        }
-        throw new IllegalArgumentException("Expression could not be evaluated: " + expr);
-    }
+
 
 
     private void executePossibleMethodCall(String line) {
@@ -217,29 +325,7 @@ public class KeywordHandler {
         }
     }
 
-    public void handleDeclaration(String line) {
-        String[] parts = line.split("=", 2);
-        String declarationPart = parts[0].trim();
-        String valuePart = parts.length > 1 ? parts[1].trim() : "";
-        String[] declarationParts = declarationPart.split("\\s+");
 
-        String variableName = declarationParts[1].trim();
-        Object value;
-
-        try {
-            if (valuePart.matches("[A-Za-z0-9_]+\\.[A-Za-z0-9_]+\\(\\)")) {  // Check for method call pattern
-                String className = valuePart.substring(0, valuePart.indexOf('.'));
-                String methodName = valuePart.substring(valuePart.indexOf('.') + 1, valuePart.indexOf('('));
-                Class<?> clazz = importedClasses.get(className).clazz;
-                value = new ContextUtils.MethodReferenceContext(clazz, methodName);
-            } else {
-                value = evaluateExpression(valuePart, scopeChain.currentScope());
-            }
-            scopeChain.currentScope().defineVariable(variableName, value, declarationParts[0].equals("val"), value.getClass());
-        } catch (RuntimeException e) {
-            KotlinScript.LOGGER.error("Error handling declaration: " + line, e);
-        }
-    }
 
 
 
@@ -370,8 +456,99 @@ public class KeywordHandler {
 
         return expr;
     }
+    private Object parseLiteral(String expr) {
+        // Trim the expression
+        expr = expr.trim();
 
+        // Check for string literals
+        if (expr.startsWith("\"") && expr.endsWith("\"")) {
+            return expr.substring(1, expr.length() - 1);
+        }
 
+        // Check for boolean literals
+        if (expr.equals("true")) {
+            return true;
+        }
+        if (expr.equals("false")) {
+            return false;
+        }
+
+        // Check for integer literals
+        if (expr.matches("-?\\d+")) {
+            return Integer.parseInt(expr);
+        }
+
+        // Check for floating-point literals
+        if (expr.matches("-?\\d+\\.\\d+")) {
+            return Double.parseDouble(expr);
+        }
+
+        // If none of the above, return null to indicate it's not a literal
+        return null;
+    }
+
+    public void handleDeclaration(String line) {
+        String[] parts = line.split("=", 2);
+        String declarationPart = parts[0].trim();
+        String valuePart = parts.length > 1 ? parts[1].trim() : "";
+        String[] declarationParts = declarationPart.split("\\s+");
+
+        String variableName = declarationParts[1].trim();
+        Object value;
+
+        try {
+            value = parseLiteral(valuePart);
+            if (value == null) {
+                if (valuePart.matches("[A-Za-z0-9_]+\\.[A-Za-z0-9_]+\\(\\)")) {  // Check for method call pattern
+                    String className = valuePart.substring(0, valuePart.indexOf('.'));
+                    String methodName = valuePart.substring(valuePart.indexOf('.') + 1, valuePart.indexOf('('));
+                    Class<?> clazz = importedClasses.get(className).clazz;
+                    value = new ContextUtils.MethodReferenceContext(clazz, methodName);
+                } else {
+                    // Evaluate expressions
+                    value = evaluateExpression(valuePart, scopeChain.currentScope());
+                }
+            }
+            scopeChain.currentScope().defineVariable(variableName, value, declarationParts[0].equals("val"), value.getClass());
+        } catch (RuntimeException e) {
+            KotlinScript.LOGGER.error("Error handling declaration: " + line, e);
+        }
+    }
+    private Object evaluateExpression(String expr, Scope scope) {
+        try {
+            Object literalValue = parseLiteral(expr);
+            if (literalValue != null) {
+                return literalValue;
+            }
+            // Check if the expression is a method call
+            if (expr.matches("[A-Za-z0-9_]+\\.[A-Za-z0-9_]+\\(.*\\)")) {
+                // This pattern assumes a simple method call like ClassName.methodName()
+                String className = expr.substring(0, expr.indexOf('.'));
+                String methodName = expr.substring(expr.indexOf('.') + 1, expr.indexOf('('));
+                ContextUtils.ClassContext classContext = importedClasses.get(className);
+                if (classContext != null) {
+                    Method method = classContext.clazz.getMethod(methodName);
+                    if (java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
+                        Object result = method.invoke(null);
+                        if (method.getReturnType().equals(Void.TYPE)) {
+                            // For void methods, return a placeholder or null
+                            return "Void Method Placeholder";
+                        }
+                        return result;
+                    }
+                }
+            } else if (expr.startsWith("\"") && expr.endsWith("\"")) {
+                return expr.substring(1, expr.length() - 1);  // Handle string literals
+            } else if (expr.matches("-?\\d+(\\.\\d+)?")) {
+                return Double.parseDouble(expr);  // Handle numeric values
+            } else if (scope.hasVariable(expr)) {
+                return scope.getVariable(expr);  // Retrieve value of an existing variable
+            }
+        } catch (Exception e) {
+            KotlinScript.LOGGER.error("Failed to evaluate expression: " + expr, e);
+        }
+        throw new IllegalArgumentException("Expression could not be evaluated: " + expr);
+    }
     public static final Map<String, ContextUtils.ClassContext> importedClasses = new HashMap<>();
     public void importClass(String importStatement) {
         String className;

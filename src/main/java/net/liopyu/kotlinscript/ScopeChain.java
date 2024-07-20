@@ -8,7 +8,14 @@ public class ScopeChain {
 
     public ScopeChain() {
         scopes = new ArrayDeque<>();
-        scopes.push(new Scope(null)); // global scope
+        var globalScope = new Scope(null);
+        setGlobalVariables(globalScope);
+        scopes.push(globalScope);
+    }
+    public void setGlobalVariables(Scope globalScope) {
+        globalScope.variables.put("true", true);
+        globalScope.variables.put("false", false);
+        globalScope.variables.put("null", null);
     }
 
     public void enterScope() {

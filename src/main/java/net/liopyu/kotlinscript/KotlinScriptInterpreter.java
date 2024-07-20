@@ -107,6 +107,9 @@ public class KotlinScriptInterpreter {
                 case "fun":
                     keywordHandler.handleFunctionDefinition(line, scanner);
                     break;
+                case "if":
+                    keywordHandler.handleIfStatements(line, scanner);
+                    break;
                 default:
                     KotlinScript.LOGGER.error("Unhandled keyword: " + keyword);
             }

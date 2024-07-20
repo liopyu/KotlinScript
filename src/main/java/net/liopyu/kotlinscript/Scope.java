@@ -6,7 +6,7 @@ import java.util.function.Consumer;
 
 public class Scope {
     private final Scope parent;
-    private final Map<String, Object> variables;
+    final Map<String, Object> variables;
     private final Map<String, Boolean> immutabilityMap;
     private final Map<String, Class<?>> variableTypes;
     private final Map<String, Consumer<Scope>> functions;
