@@ -368,15 +368,12 @@ public class KeywordHandler {
     }
     public void handleFunctionDefinition(String line, Scanner scanner) {
         StringBuilder functionDeclaration = new StringBuilder(line.trim());
-        // Append lines until an opening brace '{' is found.
-        while (!functionDeclaration.toString().endsWith("{") && scanner.hasNextLine()) {
+        while (!functionDeclaration.toString().contains("{") && scanner.hasNextLine()) {
             functionDeclaration.append(" ").append(scanner.nextLine().trim());
         }
 
         int lastBraceIndex = functionDeclaration.lastIndexOf("{");
-        // Everything before the last '{' is considered part of the declaration.
         String declarationUpToBrace = functionDeclaration.substring(0, lastBraceIndex).trim();
-        // Everything after the last '{' is considered part of the inline function body.
         String inlineCodeAfterBrace = functionDeclaration.substring(lastBraceIndex + 1).trim();
 
         int functionNameStart = 4; // Skip the "fun " part
@@ -386,62 +383,68 @@ public class KeywordHandler {
         }
         String functionName = declarationUpToBrace.substring(functionNameStart, functionNameEnd).trim();
 
-        // Check for closing parenthesis ')'
-        int paramsEnd = declarationUpToBrace.indexOf(')', functionNameEnd);
-        if (paramsEnd == -1) {
-            throw new RuntimeException("Syntax error: Function definition missing ')'.");
-        }
-
         StringBuilder functionBody = new StringBuilder();
-        int braceDepth = 1;
+        int braceDepth = 1; // Starts with 1 due to the initial '{'
         boolean inString = false;
         char stringChar = '\0';
 
-        // Start by adding any inline code after the opening brace directly to the body.
+        // Add any inline code immediately after the '{' to the function body.
         functionBody.append(inlineCodeAfterBrace).append("\n");
 
         while (scanner.hasNext() && braceDepth > 0) {
             String nextLine = scanner.nextLine();
-            for (char nextChar : nextLine.toCharArray()) {
-                functionBody.append(nextChar);
-                if (inString) {
-                    if (nextChar == stringChar) {
-                        inString = false;
+            int firstBraceIndex = nextLine.indexOf('}');
+            if (firstBraceIndex != -1 && firstBraceIndex != 0) {
+                // There's inline code before the closing '}' on this line
+                String codeBeforeBrace = nextLine.substring(0, firstBraceIndex).trim();
+                for (char nextChar : codeBeforeBrace.toCharArray()) {
+                    functionBody.append(nextChar);
+                    if (nextChar == '{') {
+                        braceDepth++;
+                    } else if (nextChar == '"' || nextChar == '\'') {
+                        if (inString && stringChar == nextChar) {
+                            inString = false; // Closing the string
+                        } else {
+                            inString = true;
+                            stringChar = nextChar; // Opening a new string
+                        }
                     }
-                    continue;
                 }
-                if (nextChar == '"' || nextChar == '\'') {
-                    inString = true;
-                    stringChar = nextChar;
-                    continue;
-                }
+                functionBody.append("\n");
+            }
+
+            // Continue processing the rest of the line after handling the code before '}'
+            for (int i = (firstBraceIndex == -1 ? 0 : firstBraceIndex); i < nextLine.length(); i++) {
+                char nextChar = nextLine.charAt(i);
+                functionBody.append(nextChar);
                 if (nextChar == '{') {
                     braceDepth++;
                 } else if (nextChar == '}') {
                     braceDepth--;
-                    if (braceDepth == 0) {
-                        break;  // Stop reading if all braces are closed.
+                    if (braceDepth == 0 && i != nextLine.length() - 1) {
+                        // Break out of the loop if the function body is properly closed
+                        break;
                     }
                 }
             }
+
             functionBody.append("\n");
+            if (braceDepth == 0) break; // Stop processing if all braces are matched
         }
 
         if (braceDepth != 0) {
             throw new RuntimeException("Syntax error: Mismatched braces in function definition.");
         }
 
-        // Define and store the function in the current scope
         Consumer<Scope> function = currentScope -> {
             try {
-                interpretFunctionBody(functionBody.toString(), currentScope);
+                interpretFunctionBody(functionBody.toString().trim(), currentScope);
             } catch (FileNotFoundException e) {
                 throw new RuntimeException(e);
             }
         };
         scopeChain.currentScope().defineFunction(functionName, function);
     }
-
 
 
     public void executeFunction(String functionName) {
