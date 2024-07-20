@@ -1,19 +1,13 @@
 package net.liopyu.kotlinscript;
 
-import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.lang.reflect.Method;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Scanner;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
-import static net.liopyu.kotlinscript.KotlinScript.interpreterMap;
 
 public class KeywordHandler {
     private final ScopeChain scopeChain;
@@ -38,6 +32,9 @@ public class KeywordHandler {
 
             while (scanner.hasNextLine()) {
                 String nextLine = scanner.nextLine().trim();
+                if (handleComments(nextLine, scanner)) {
+                    continue; // Skip comment lines
+                }
                 if (nextLine.equals("}")) {
                     break; // Exit the loop on a standalone closing bracket
                 } else if (nextLine.startsWith("}")) {
@@ -83,16 +80,13 @@ public class KeywordHandler {
         }
     }
     public void interpretLine(String line, Scanner scanner) throws FileNotFoundException {
-        // Trim the line and remove the portion after any comment markers.
-        int commentIndex = line.indexOf("//");
-        if (commentIndex != -1) {
-            line = line.substring(0, commentIndex).trim(); // Trim after cutting off the comment.
-        }
-
-        // Proceed only if the line is not empty after removing comments.
-        if (line.isEmpty()) {
+        if (handleComments(line,scanner)) {
             return;
         }
+        int commentIndex = line.indexOf("//");
+        if (commentIndex != -1) {
+            line = line.substring(0, commentIndex).trim();
+        }else line = line.trim();
 
         if (KotlinScriptHelperClass.isKeyWord(line)) {
             String keyword = KotlinScriptHelperClass.getKeyWord(line);
@@ -126,6 +120,22 @@ public class KeywordHandler {
             // Handle possible class method invocation or variable assignment if not a simple keyword or variable execution
             handleAssignmentOrMethodCall(line);
         }
+    }
+    public boolean handleComments(String line,Scanner scanner) {
+        if (line.isEmpty()) {
+            return true;
+        }
+        line = line.trim();
+        if (line.startsWith("//")) {
+            return true;
+        }
+        if (line.startsWith("/*")) {
+            while (!line.endsWith("*/") && scanner.hasNextLine()) {
+                line = scanner.nextLine().trim();
+            }
+            return true;
+        }
+        return false;
     }
 
     private void handleAssignmentOrMethodCall(String line) {
@@ -422,6 +432,9 @@ public class KeywordHandler {
 
         while (scanner.hasNext() && braceDepth > 0) {
             String nextLine = scanner.nextLine();
+            if (handleComments(nextLine, scanner)) {
+                continue; // Skip comment lines
+            }
             int firstBraceIndex = nextLine.indexOf('}');
             if (firstBraceIndex != -1 && firstBraceIndex != 0) {
                 // There's inline code before the closing '}' on this line

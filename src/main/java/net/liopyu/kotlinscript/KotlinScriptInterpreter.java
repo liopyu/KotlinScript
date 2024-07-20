@@ -82,16 +82,14 @@ public class KotlinScriptInterpreter {
         }
     }
     public void interpretLine(String line, Scanner scanner) throws FileNotFoundException {
-        // Trim the line and remove the portion after any comment markers.
-        int commentIndex = line.indexOf("//");
-        if (commentIndex != -1) {
-            line = line.substring(0, commentIndex).trim(); // Trim after cutting off the comment.
-        }
-
-        // Proceed only if the line is not empty after removing comments.
-        if (line.isEmpty()) {
+        if (keywordHandler.handleComments(line,scanner)) {
             return;
         }
+        int commentIndex = line.indexOf("//");
+        if (commentIndex != -1) {
+            line = line.substring(0, commentIndex).trim();
+        }else line = line.trim();
+
 
         if (KotlinScriptHelperClass.isKeyWord(line)) {
             String keyword = KotlinScriptHelperClass.getKeyWord(line);
