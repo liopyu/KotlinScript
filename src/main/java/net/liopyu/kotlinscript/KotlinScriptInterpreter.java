@@ -106,9 +106,15 @@ public class KotlinScriptInterpreter {
                 case "import":
                     keywordHandler.importClass(line);
                     break;
+                case "fun":
+                    keywordHandler.handleFunctionDefinition(line, scanner);
+                    break;
                 default:
                     KotlinScript.LOGGER.error("Unhandled keyword: " + keyword);
             }
+        }  else if (line.matches("\\w+\\(\\)")) { // Detects function calls with ()
+            String functionName = line.substring(0, line.indexOf('('));
+            keywordHandler.executeFunction(functionName);
         } else if (line.matches("\\w+")) {
             if (!executeVariable(line)) {  // Attempt to execute if it's a single word that might be a variable/method.
                 KotlinScript.LOGGER.info("Command or variable not executed: " + line);

@@ -2,17 +2,34 @@ package net.liopyu.kotlinscript;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.function.Consumer;
 
 public class Scope {
     private final Scope parent;
     private final Map<String, Object> variables;
     private final Map<String, Boolean> immutabilityMap;
     private final Map<String, Class<?>> variableTypes;
+    private final Map<String, Consumer<Scope>> functions;
     public Scope(Scope parent) {
         this.parent = parent;
         this.variables = new HashMap<>();
         this.immutabilityMap = new HashMap<>();
         this.variableTypes = new HashMap<>();
+        this.functions = new HashMap<>();
+    }
+    public void defineFunction(String name, Consumer<Scope> function) {
+        if (functions.containsKey(name)) {
+            throw new RuntimeException("Function " + name + " already defined in this scope");
+        }
+        functions.put(name, function);
+    }
+    public Consumer<Scope> getFunction(String name) {
+        if (functions.containsKey(name)) {
+            return functions.get(name);
+        } else if (parent != null) {
+            return parent.getFunction(name); // Check parent scopes recursively
+        }
+        return null;
     }
     public boolean isVariableDefined(String name) {
         if (variables.containsKey(name)) {

@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Scanner;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -77,9 +78,15 @@ public class KeywordHandler {
                 case "import":
                     this.importClass(line);
                     break;
+                case "fun":
+                    this.handleFunctionDefinition(line, scanner);
+                    break;
                 default:
                     KotlinScript.LOGGER.error("Unhandled keyword: " + keyword);
             }
+        }  else if (line.matches("\\w+\\(\\)")) { // Detects function calls with ()
+            String functionName = line.substring(0, line.indexOf('('));
+            executeFunction(functionName);
         } else if (line.matches("\\w+")) {
             if (!executeVariable(line)) {  // Attempt to execute if it's a single word that might be a variable/method.
                 KotlinScript.LOGGER.info("Command or variable not executed: " + line);
@@ -359,8 +366,101 @@ public class KeywordHandler {
             KotlinScript.LOGGER.error("Class not found: " + importStatement, e);
         }
     }
+    public void handleFunctionDefinition(String line, Scanner scanner) {
+        // Extract function name from the line, assuming correct syntax up to '('
+        int functionNameStart = 4; // Skip the "fun " part
+        int functionNameEnd = line.indexOf('(');
+        if (functionNameEnd == -1) {
+            throw new RuntimeException("Syntax error in pattern3: Function definition missing '('.");
+        }
+        String functionName = line.substring(functionNameStart, functionNameEnd).trim();
 
+        // Check for closing parenthesis ')'
+        int paramsEnd = line.indexOf(')', functionNameEnd);
+        if (paramsEnd == -1) {
+            throw new RuntimeException("Syntax error in pattern3: Function definition missing ')'.");
+        }
 
+        // Move to the position after the closing parenthesis
+        int braceStart = paramsEnd + 1;
 
+        // Check if there is any text between the closing parenthesis and the opening brace
+        while (braceStart < line.length() && Character.isWhitespace(line.charAt(braceStart))) {
+            braceStart++;
+        }
+
+        // Check for the opening brace '{'
+        if (braceStart >= line.length() || line.charAt(braceStart) != '{') {
+            throw new RuntimeException("Syntax error in pattern3: Function definition must be followed by '{'");
+        }
+        braceStart++; // Move past the '{'
+
+        scanner.useDelimiter(""); // Change delimiter to consume character by character
+
+        // Initialize function body capturing
+        StringBuilder functionBody = new StringBuilder();
+        int braceDepth = 1;
+        boolean inString = false;
+        char stringChar = '\0';
+
+        while (scanner.hasNext() && braceDepth > 0) {
+            char nextChar = scanner.next().charAt(0);
+            functionBody.append(nextChar);
+
+            if (inString) {
+                if (nextChar == stringChar) {
+                    inString = false;
+                }
+                continue;
+            }
+
+            if (nextChar == '"' || nextChar == '\'') {
+                inString = true;
+                stringChar = nextChar;
+                continue;
+            }
+
+            if (nextChar == '{') {
+                braceDepth++;
+            } else if (nextChar == '}') {
+                braceDepth--;
+            }
+        }
+
+        if (braceDepth != 0) {
+            throw new RuntimeException("Syntax error in pattern3: Mismatched braces in function definition.");
+        }
+
+        // Define and store the function in the current scope
+        Consumer<Scope> function = currentScope -> {
+            try {
+                interpretFunctionBody(functionBody.toString(), currentScope);
+            } catch (FileNotFoundException e) {
+                throw new RuntimeException(e);
+            }
+        };
+        scopeChain.currentScope().defineFunction(functionName, function);
+    }
+
+    public void executeFunction(String functionName) {
+        Consumer<Scope> function = scopeChain.currentScope().getFunction(functionName);
+        if (function != null) {
+            // Execute the function in a new scope
+            scopeChain.enterScope();
+            try {
+                function.accept(scopeChain.currentScope());
+            } finally {
+                scopeChain.exitScope(); // Ensure the new function execution scope is exited
+            }
+        } else {
+            KotlinScript.LOGGER.error("Function not found: " + functionName);
+        }
+    }
+
+    public void interpretFunctionBody(String functionBody, Scope scope) throws FileNotFoundException {
+        try (Scanner scanner = new Scanner(functionBody)) {
+            this.handleNewScope(scanner);
+        }
+    }
 
 }

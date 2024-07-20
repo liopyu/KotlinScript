@@ -16,6 +16,7 @@ public class KotlinScriptHelperClass {
         addKeyWord("var");
         addKeyWord("print");
         addKeyWord("import");
+        addKeyWord("fun");
         keywordPattern = Pattern.compile("(" + String.join("|", keywords) + ")(\\W)");
     }
 
