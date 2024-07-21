@@ -4,7 +4,6 @@ import java.io.FileNotFoundException;
 import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Scanner;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -16,7 +15,29 @@ public class KeywordHandler {
         this.scopeChain = scopeChain;
     }
 
-    public void handleNewScope(Scanner scanner, String line) throws FileNotFoundException {
+
+    private Object evaluateOperand(String operand) {
+        // Check if the operand is a variable
+        if (currentScope().hasVariable(operand)) {
+            return currentScope().getVariable(operand);
+        }
+
+        // If not a variable, try to parse it as a literal
+        if (operand.equalsIgnoreCase("true")) {
+            return true;
+        } else if (operand.equalsIgnoreCase("false")) {
+            return false;
+        } else if (operand.matches("-?\\d+")) {
+            return Integer.parseInt(operand);
+        } else if (operand.matches("-?\\d*\\.\\d+")) {
+            return Double.parseDouble(operand);
+        }
+
+        // If not a known literal, return it as a string
+        return operand;
+    }
+
+    public void handleNewScope(EnhancedScanner scanner, String line) throws FileNotFoundException {
         scopeChain.enterScope();
         KotlinScript.LOGGER.info("Entering new scope with line: " + line);
         try {
@@ -67,100 +88,280 @@ public class KeywordHandler {
         }
     }
 
-    public void handleIfStatements(String line, Scanner scanner) throws FileNotFoundException {
-        KotlinScript.LOGGER.info("Entering handleIfStatements with line: " + line);
+    private boolean handleIfElseContinuation(String line, EnhancedScanner scanner, Scope currentScope) throws FileNotFoundException {
+        KotlinScript.LOGGER.info("Checking if continuing from an if-else chain with line: " + line + " justExitedIfElseChain boolean: " + currentScope.justExitedIfElseChain);
 
-        // Extract and evaluate the condition
-        int conditionStart = line.indexOf('(');
-        int conditionEnd = line.indexOf(')', conditionStart);
-        if (conditionStart == -1 || conditionEnd == -1) {
-            throw new RuntimeException("Syntax error: Invalid if statement syntax.");
-        }
-        String condition = line.substring(conditionStart + 1, conditionEnd).trim();
-        boolean conditionResult = evaluateCondition(condition);
-        KotlinScript.LOGGER.info("Condition evaluated to: " + conditionResult);
+        line = line.trim();
 
-        // Process the if block or skip to else/else if
-        StringBuilder blockContent = new StringBuilder();
-        int braceDepth = 1;
+        if (currentScope.justExitedIfElseChain) {
+            KotlinScript.LOGGER.info("Detected just exited if-else chain. Checking for closing bracket or else statement.");
 
-        while (scanner.hasNext() && braceDepth > 0) {
-            String nextLine = scanner.nextLine().trim();
-            int closingBraceIndex = nextLine.indexOf('}');
-            if (closingBraceIndex != -1) {
-                braceDepth--;
-                if (braceDepth == 0) {  // Check if we are at the end of the current block
-                    String afterBraceContent = nextLine.substring(closingBraceIndex + 1).trim();
-                    if (!afterBraceContent.isEmpty()) {
-                        // Process following blocks if any
-                        if (afterBraceContent.startsWith("else if")) {
-                            String elseIfLine = "if" + afterBraceContent.substring(7);
-                            KotlinScript.LOGGER.info("Else if block transformed and detected: " + elseIfLine);
-                            handleIfStatements(elseIfLine, scanner);
-                        } else if (afterBraceContent.startsWith("else")) {
-                            KotlinScript.LOGGER.info("Else block detected: " + afterBraceContent);
-                            handleElseBlock(scanner, afterBraceContent);
-                        }
-                    }
-                    break;  // Break the loop since we've finished the current block
+            while (true) {
+                if (line.matches("\\} *else if\\(.*\\) *\\{") || line.matches("\\} *else *\\{")) {
+                    currentScope.justExitedIfElseChain = false;
+                    KotlinScript.LOGGER.info("Skipping 'else' or 'else if' continuation: " + line);
+                    skipBlock(scanner);  // Skip the entire block since it's part of a handled chain
+                    return true;
+                } else if (line.equals("}")) {
+                    currentScope.justExitedIfElseChain = false;
+                    KotlinScript.LOGGER.info("Skipping final closing bracket after if-else chain.");
+                    return true; // Skip this line
+                } else if (scanner.hasNextLine()) {
+                    line = scanner.nextLine().trim();
+                } else {
+                    currentScope.justExitedIfElseChain = false;
+                    break;
                 }
-            } else {
-                if (braceDepth > 0) { // Ensure we're not processing content outside of the current block
-                    blockContent.append(nextLine).append("\n");
-                }
-                if (nextLine.contains("{")) braceDepth++;
             }
         }
 
+        if (currentScope.parsingIfElseChain) {
+            KotlinScript.LOGGER.info("Processing line in if-else chain: " + line);
 
-        if (!conditionResult || blockContent.length() > 0) {
-            KotlinScript.LOGGER.info("Executing if block content");
-            interpretBlockContent(blockContent.toString().trim());
+            int closingBraceIndex = line.indexOf('}');
+            if (closingBraceIndex != -1) {
+                String afterBraceContent = line.substring(closingBraceIndex + 1).trim();
+                if (!afterBraceContent.isEmpty()) {
+                    line = afterBraceContent;
+                    KotlinScript.LOGGER.info("Detected content after closing brace: " + afterBraceContent);
+                } else {
+                    if (scanner.hasNextLine()) {
+                        line = scanner.nextLine().trim();
+                        KotlinScript.LOGGER.info("Moving to next line after closing brace: " + line);
+                    } else {
+                        currentScope.parsingIfElseChain = false;
+                        currentScope.justExitedIfElseChain = true;
+                        finalizeIfElseChain(currentScope);
+                        return false;
+                    }
+                }
+            }
+
+            if (line.startsWith("else if")) {
+                line = "if" + line.substring(7).trim(); // Transform "else if" into "if"
+                KotlinScript.LOGGER.info("Handling else-if statement: " + line);
+                handleSingleIfStatement(line, scanner);
+            } else if (line.startsWith("else")) {
+                KotlinScript.LOGGER.info("Handling else statement: " + line);
+                handleElseBlock(scanner, line);
+            } else {
+                currentScope.parsingIfElseChain = false; // End of if-else chain
+                currentScope.justExitedIfElseChain = true;
+                finalizeIfElseChain(currentScope);
+                return true; // Reprocess the line
+            }
+            return true;
         }
+        return false;
     }
 
 
-    private void handleElseBlock(Scanner scanner, String line) throws FileNotFoundException {
+    private void handleElseBlock(EnhancedScanner scanner, String line) throws FileNotFoundException {
         KotlinScript.LOGGER.info("Entering handleElseBlock with line: " + line);
+
         // Strip the initial 'else' and possibly trim leading whitespace before '{'
         line = line.substring(4).trim();
         if (!line.startsWith("{")) {
             while (!line.startsWith("{") && scanner.hasNextLine()) {
                 line = scanner.nextLine().trim();
+                KotlinScript.LOGGER.info("Continuing to next line for else block: " + line);
             }
         }
 
-        if (!line.startsWith("{")) {
+        if (line.startsWith("{")) {
+            handleNewScope(scanner, line);
+        } else {
             throw new RuntimeException("Syntax error: Missing opening brace for else block.");
         }
+        scopeChain.currentScope().parsingIfElseChain = false; // End if-else chain after handling else block
+        scopeChain.currentScope().justExitedIfElseChain = true; // Mark that we have executed an else block
+    }
 
-        handleNewScope(scanner, line);
+
+
+    private void handleIfElseChain(String line, EnhancedScanner scanner) throws FileNotFoundException {
+        handleSingleIfStatement(line, scanner);
     }
-    private void interpretBlockContent(String blockContent) throws FileNotFoundException {
-        try (Scanner blockScanner = new Scanner(blockContent)) {
-            while (blockScanner.hasNextLine()) {
-                interpretLine(blockScanner.nextLine().trim(), blockScanner);
-            }
+    private void handleSingleIfStatement(String line, EnhancedScanner scanner) throws FileNotFoundException {
+        KotlinScript.LOGGER.info("Handling if statement: " + line);
+        int conditionStart = line.indexOf('(');
+        int conditionEnd = line.indexOf(')', conditionStart);
+        if (conditionStart == -1 || conditionEnd == -1) {
+            throw new RuntimeException("Invalid syntax for if statement.");
+        }
+
+        String condition = line.substring(conditionStart + 1, conditionEnd).trim();
+        boolean conditionResult = evaluateCondition(condition);
+        KotlinScript.LOGGER.info("Condition evaluated to: " + conditionResult);
+
+        if (conditionResult) {
+            final String finalLine = line.substring(conditionEnd + 1).trim();
+            KotlinScript.LOGGER.info("Storing execution block for true condition.");
+
+            Runnable executionBlock = () -> {
+                try {
+                    if (finalLine.startsWith("{")) {
+                        handleNewScope(scanner, finalLine);
+                    } else if (scanner.hasNextLine()) {
+                        handleNewScope(scanner, scanner.nextLine().trim());
+                    }
+                } catch (FileNotFoundException e) {
+                    throw new RuntimeException("Error during deferred execution: " + e.getMessage(), e);
+                }
+            };
+
+            currentScope().deferredExecution = executionBlock; // Store execution block
+            currentScope().parsingIfElseChain = false;
+            currentScope().justExitedIfElseChain = true;
+
+            // Execute the stored block immediately after setting the flags
+            executeDeferredBlock(currentScope());
+        } else {
+            skipBlock(scanner);
         }
     }
+
+    private void executeDeferredBlock(Scope currentScope) {
+        if (currentScope.deferredExecution != null) {
+            KotlinScript.LOGGER.info("Executing deferred block for true if condition.");
+            currentScope.deferredExecution.run();
+            currentScope.deferredExecution = null;
+        }
+    }
+
+    private Scope currentScope() {
+        return scopeChain.currentScope();
+    }
+
+
+
+    private boolean handleElseDetection(String line, EnhancedScanner scanner, Scope currentScope) {
+        if (!currentScope.justExitedIfElseChain) {
+            return false;
+        }
+
+        line = line.trim();
+        if (line.matches("\\} *else if\\(.*\\) *\\{") || line.matches("\\} *else *\\{")) {
+            KotlinScript.LOGGER.info("Detected 'else' or 'else if' just after exiting an if block, skipping...");
+            currentScope.justExitedIfElseChain = false;  // Reset the flag after handling
+            skipBlock(scanner);  // Skip the entire block since it's part of a handled chain
+            return true;
+        } else if (line.equals("}")) {
+            // Check the next line if it's just a closing brace
+            if (scanner.hasNextLine()) {
+                String nextLine = scanner.nextLine().trim();
+                if (nextLine.startsWith("else")) {
+                    KotlinScript.LOGGER.info("Detected 'else' or 'else if' on the next line after exiting an if block, skipping...");
+                    currentScope.justExitedIfElseChain = false;  // Reset the flag after handling
+                    skipBlock(scanner);  // Skip the entire block since it's part of a handled chain
+                    return true;
+                } else {
+                    // Put the line back if it's not part of an else statement
+                    scanner.unreadLine(nextLine);
+                }
+            }
+        }
+        return false;
+    }
+
+    private void finalizeIfElseChain(Scope currentScope) {
+        if (currentScope.deferredExecution != null) {
+            KotlinScript.LOGGER.info("Executing deferred block for if-else chain.");
+            currentScope.deferredExecution.run();
+            currentScope.deferredExecution = null; // Clear the deferred execution
+        }
+        currentScope.justExitedIfElseChain = false;
+    }
+
+
+
+
+    private void skipBlock(EnhancedScanner scanner) {
+        int braceDepth = 0;
+
+        while (scanner.hasNextLine()) {
+            String nextLine = scanner.nextLine().trim();
+            if (nextLine.contains("{")) braceDepth++;
+            if (nextLine.contains("}")) braceDepth--;
+            if (braceDepth <= 0) break; // Exit when all braces are closed
+        }
+    }
+
     private boolean evaluateCondition(String condition) {
-        // Simple condition evaluation (can be extended for complex conditions)
-        // Here, we assume condition is a variable name for simplicity
-        Object value = scopeChain.currentScope().getVariable(condition);
-        if (value instanceof Boolean) {
-            return (Boolean) value;
+        KotlinScript.LOGGER.info("Evaluating condition: " + condition);
+
+        // Split the condition into parts using a regex to find comparison operators
+        String[] parts = condition.split("(?<=<=|>=|==|!=|<|>)|(?=<=|>=|==|!=|<|>)");
+        if (parts.length != 3) {
+            throw new RuntimeException("Invalid condition format: " + condition);
         }
-        throw new RuntimeException("Invalid condition: " + condition);
-    }
-    private void interpretInlineCode(String code, Scanner scanner) throws FileNotFoundException {
-        // Split by semicolons if multiple statements are on one line after the opening brace
-        String[] statements = code.split(";");
-        for (String statement : statements) {
-            if (!statement.trim().isEmpty()) {
-                interpretLine(statement.trim(), scanner);
-            }
+
+        String leftOperand = parts[0].trim();
+        String operator = parts[1].trim();
+        String rightOperand = parts[2].trim();
+
+        // Evaluate the left and right operands
+        Object leftValue = evaluateOperand(leftOperand);
+        Object rightValue = evaluateOperand(rightOperand);
+
+        // Perform the comparison based on the operator and type checks
+        switch (operator) {
+            case "==":
+                return leftValue.equals(rightValue);
+            case "!=":
+                return !leftValue.equals(rightValue);
+            case "<":
+            case ">":
+            case "<=":
+            case ">=":
+                if (leftValue instanceof Number && rightValue instanceof Number) {
+                    return compareNumbers((Number) leftValue, (Number) rightValue, operator);
+                } else if (leftValue instanceof Comparable && rightValue instanceof Comparable) {
+                    return compareComparables((Comparable) leftValue, (Comparable) rightValue, operator);
+                } else {
+                    throw new RuntimeException("Unsupported operand types for operator " + operator + ": " + leftValue.getClass() + " and " + rightValue.getClass());
+                }
+            default:
+                throw new RuntimeException("Unsupported operator: " + operator);
         }
     }
+
+    private boolean compareNumbers(Number leftValue, Number rightValue, String operator) {
+        double leftDouble = leftValue.doubleValue();
+        double rightDouble = rightValue.doubleValue();
+
+        switch (operator) {
+            case "<":
+                return leftDouble < rightDouble;
+            case ">":
+                return leftDouble > rightDouble;
+            case "<=":
+                return leftDouble <= rightDouble;
+            case ">=":
+                return leftDouble >= rightDouble;
+            default:
+                throw new RuntimeException("Unsupported operator for numbers: " + operator);
+        }
+    }
+
+    private boolean compareComparables(Comparable leftValue, Comparable rightValue, String operator) {
+        int comparisonResult = leftValue.compareTo(rightValue);
+
+        switch (operator) {
+            case "<":
+                return comparisonResult < 0;
+            case ">":
+                return comparisonResult > 0;
+            case "<=":
+                return comparisonResult <= 0;
+            case ">=":
+                return comparisonResult >= 0;
+            default:
+                throw new RuntimeException("Unsupported operator for comparables: " + operator);
+        }
+    }
+
+
 
     public boolean executeVariable(String variableName) {
         Object value = scopeChain.currentScope().getVariable(variableName);
@@ -177,7 +378,7 @@ public class KeywordHandler {
             return false;
         }
     }
-    public void interpretLine(String line, Scanner scanner) throws FileNotFoundException {
+    public void interpretLine(String line, EnhancedScanner scanner) throws FileNotFoundException {
         if (handleComments(line,scanner)) {
             return;
         }
@@ -185,7 +386,18 @@ public class KeywordHandler {
         if (commentIndex != -1) {
             line = line.substring(0, commentIndex).trim();
         }else line = line.trim();
+        Scope currentScope = scopeChain.currentScope();
+        if (handleIfElseContinuation(line, scanner, currentScope)) {
+            return;
+        }
 
+        if (currentScope.parsingIfElseChain) {
+            KotlinScript.LOGGER.info("Skipping line during if-else chain parsing: " + line);
+            return;
+        }
+        if (handleElseDetection(line, scanner, currentScope)) {
+            return;  // Skip further processing since the else part is handled
+        }
         if (KotlinScriptHelperClass.isKeyWord(line)) {
             String keyword = KotlinScriptHelperClass.getKeyWord(line);
             switch (keyword) {
@@ -203,7 +415,9 @@ public class KeywordHandler {
                     this.handleFunctionDefinition(line, scanner);
                     break;
                 case "if":
-                    this.handleIfStatements(line, scanner);
+                    currentScope.parsingIfElseChain = true;
+                    KotlinScript.LOGGER.info("Starting if-else chain with line: " + line);
+                    handleIfElseChain(line, scanner);
                     break;
                 default:
                     KotlinScript.LOGGER.error("Unhandled keyword: " + keyword);
@@ -222,24 +436,6 @@ public class KeywordHandler {
             handleAssignmentOrMethodCall(line);
         }
     }
-
-    public boolean handleComments(String line,Scanner scanner) {
-        if (line.isEmpty()) {
-            return true;
-        }
-        line = line.trim();
-        if (line.startsWith("//")) {
-            return true;
-        }
-        if (line.startsWith("/*")) {
-            while (!line.endsWith("*/") && scanner.hasNextLine()) {
-                line = scanner.nextLine().trim();
-            }
-            return true;
-        }
-        return false;
-    }
-
     private void handleAssignmentOrMethodCall(String line) {
         if (line.contains("=")) {
             String[] parts = line.split("=", 2);
@@ -288,6 +484,24 @@ public class KeywordHandler {
             KotlinScript.LOGGER.error("Unrecognized command: " + line);
         }
     }
+
+    public boolean handleComments(String line,EnhancedScanner scanner) {
+        if (line.isEmpty()) {
+            return true;
+        }
+        line = line.trim();
+        if (line.startsWith("//")) {
+            return true;
+        }
+        if (line.startsWith("/*")) {
+            while (!line.endsWith("*/") && scanner.hasNextLine()) {
+                line = scanner.nextLine().trim();
+            }
+            return true;
+        }
+        return false;
+    }
+
 
 
 
@@ -546,7 +760,7 @@ public class KeywordHandler {
             KotlinScript.LOGGER.error("Class not found: " + importStatement, e);
         }
     }
-    public void handleFunctionDefinition(String line, Scanner scanner) {
+    public void handleFunctionDefinition(String line, EnhancedScanner scanner) {
         StringBuilder functionDeclaration = new StringBuilder(line.trim());
         while (!functionDeclaration.toString().contains("{") && scanner.hasNextLine()) {
             functionDeclaration.append(" ").append(scanner.nextLine().trim());
@@ -646,7 +860,7 @@ public class KeywordHandler {
     }
 
     public void interpretFunctionBody(String functionBody, String line) throws FileNotFoundException {
-        try (Scanner scanner = new Scanner(functionBody)) {
+        try (EnhancedScanner scanner = new EnhancedScanner(functionBody)) {
             this.handleNewScope(scanner,line);
         }
     }

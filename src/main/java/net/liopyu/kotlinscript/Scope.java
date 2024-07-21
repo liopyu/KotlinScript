@@ -10,12 +10,16 @@ public class Scope {
     private final Map<String, Boolean> immutabilityMap;
     private final Map<String, Class<?>> variableTypes;
     private final Map<String, Consumer<Scope>> functions;
+    public boolean parsingIfElseChain = false;
+    public boolean justExitedIfElseChain = false;
+    public Runnable deferredExecution;
     public Scope(Scope parent) {
         this.parent = parent;
         this.variables = new HashMap<>();
         this.immutabilityMap = new HashMap<>();
         this.variableTypes = new HashMap<>();
         this.functions = new HashMap<>();
+        this.deferredExecution = null;
     }
     public void defineFunction(String name, Consumer<Scope> function) {
         if (functions.containsKey(name)) {
