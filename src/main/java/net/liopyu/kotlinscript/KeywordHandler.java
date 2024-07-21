@@ -16,17 +16,24 @@ public class KeywordHandler {
         this.scopeChain = scopeChain;
     }
 
-    public void handleNewScope(Scanner scanner,String line) throws FileNotFoundException {
+    public void handleNewScope(Scanner scanner, String line) throws FileNotFoundException {
         scopeChain.enterScope();
+        KotlinScript.LOGGER.info("Entering new scope with line: " + line);
         try {
             int firstBraceIndex = line.indexOf('{');
 
-            // Handle any inline code immediately after the opening brace
+            // Immediately process any inline code following the opening brace.
             if (firstBraceIndex != -1) {
                 String inlineCodeAfterBrace = line.substring(firstBraceIndex + 1).trim();
+                int lastBraceIndex = inlineCodeAfterBrace.lastIndexOf('}');
+                if (lastBraceIndex != -1) {
+                    // Handle code before the last closing brace in the same line as the opening brace.
+                    inlineCodeAfterBrace = inlineCodeAfterBrace.substring(0, lastBraceIndex).trim();
+                }
+
                 if (!inlineCodeAfterBrace.isEmpty()) {
-                    // There might be executable code directly after '{'
-                    interpretInlineCode(inlineCodeAfterBrace, scanner);
+                    KotlinScript.LOGGER.info("Interpreting inline code after opening brace: " + inlineCodeAfterBrace);
+                    interpretLine(inlineCodeAfterBrace, scanner);
                 }
             }
 
@@ -35,142 +42,99 @@ public class KeywordHandler {
                 if (handleComments(nextLine, scanner)) {
                     continue; // Skip comment lines
                 }
-                if (nextLine.equals("}")) {
-                    break; // Exit the loop on a standalone closing bracket
-                } else if (nextLine.startsWith("}")) {
-                    // Handle inline code before a closing brace
-                    String inlineCodeBeforeBrace = nextLine.substring(1).trim();
-                    if (!inlineCodeBeforeBrace.isEmpty()) {
-                        interpretLine(inlineCodeBeforeBrace, scanner);
+
+                int closingBraceIndex = nextLine.indexOf('}');
+                if (closingBraceIndex != -1) {
+                    // Handle inline code before the closing brace on the next line.
+                    if (closingBraceIndex > 0) {
+                        String codeBeforeClosingBrace = nextLine.substring(0, closingBraceIndex).trim();
+                        if (!codeBeforeClosingBrace.isEmpty()) {
+                            KotlinScript.LOGGER.info("Interpreting inline code before closing brace: " + codeBeforeClosingBrace);
+                            interpretLine(codeBeforeClosingBrace, scanner);
+                        }
                     }
-                    break;
-                } else if (!nextLine.isEmpty() && !nextLine.startsWith("//")) {
+                    break; // Exit the loop on a standalone or post-code closing bracket
+                }
+
+                if (!nextLine.isEmpty() && !nextLine.startsWith("//")) {
+                    KotlinScript.LOGGER.info("Interpreting line within scope: " + nextLine);
                     interpretLine(nextLine, scanner); // Recursively process each line within the new scope
                 }
             }
         } finally {
+            KotlinScript.LOGGER.info("Exiting scope");
             scopeChain.exitScope(); // Ensure the scope is always exited
         }
     }
+
     public void handleIfStatements(String line, Scanner scanner) throws FileNotFoundException {
         KotlinScript.LOGGER.info("Entering handleIfStatements with line: " + line);
 
-        // Extract the condition part from the if statement
+        // Extract and evaluate the condition
         int conditionStart = line.indexOf('(');
         int conditionEnd = line.indexOf(')', conditionStart);
         if (conditionStart == -1 || conditionEnd == -1) {
             throw new RuntimeException("Syntax error: Invalid if statement syntax.");
         }
         String condition = line.substring(conditionStart + 1, conditionEnd).trim();
-
-        // Evaluate the condition
         boolean conditionResult = evaluateCondition(condition);
         KotlinScript.LOGGER.info("Condition evaluated to: " + conditionResult);
 
-        // Find the opening brace for the if statement block
-        int braceIndex = line.indexOf('{', conditionEnd);
-        if (braceIndex == -1) {
-            // If the opening brace is not on the same line, find it in subsequent lines
-            while (scanner.hasNextLine()) {
-                line = scanner.nextLine().trim();
-                braceIndex = line.indexOf('{');
-                if (braceIndex != -1) {
-                    break;
-                }
-            }
-        }
-
-        if (braceIndex == -1) {
-            throw new RuntimeException("Syntax error: Missing opening brace for if statement block.");
-        }
-
-        // Process the if statement block
+        // Process the if block or skip to else/else if
         StringBuilder blockContent = new StringBuilder();
         int braceDepth = 1;
-        boolean inString = false;
-        char stringChar = '\0';
 
         while (scanner.hasNext() && braceDepth > 0) {
             String nextLine = scanner.nextLine().trim();
-            for (char nextChar : nextLine.toCharArray()) {
-                blockContent.append(nextChar);
-                if (inString) {
-                    if (nextChar == stringChar) {
-                        inString = false;
+            int closingBraceIndex = nextLine.indexOf('}');
+            if (closingBraceIndex != -1) {
+                braceDepth--;
+                if (braceDepth == 0) {  // Check if we are at the end of the current block
+                    String afterBraceContent = nextLine.substring(closingBraceIndex + 1).trim();
+                    if (!afterBraceContent.isEmpty()) {
+                        // Process following blocks if any
+                        if (afterBraceContent.startsWith("else if")) {
+                            String elseIfLine = "if" + afterBraceContent.substring(7);
+                            KotlinScript.LOGGER.info("Else if block transformed and detected: " + elseIfLine);
+                            handleIfStatements(elseIfLine, scanner);
+                        } else if (afterBraceContent.startsWith("else")) {
+                            KotlinScript.LOGGER.info("Else block detected: " + afterBraceContent);
+                            handleElseBlock(scanner, afterBraceContent);
+                        }
                     }
-                    continue;
+                    break;  // Break the loop since we've finished the current block
                 }
-                if (nextChar == '"' || nextChar == '\'') {
-                    inString = true;
-                    stringChar = nextChar;
-                    continue;
-                }
-                if (nextChar == '{') {
-                    braceDepth++;
-                } else if (nextChar == '}') {
-                    braceDepth--;
-                    if (braceDepth == 0) {
-                        break;
-                    }
-                }
-            }
-            blockContent.append("\n");
-        }
-
-        if (braceDepth != 0) {
-            throw new RuntimeException("Syntax error: Mismatched braces in if statement block.");
-        }
-
-        if (conditionResult) {
-            KotlinScript.LOGGER.info("Executing if block");
-            interpretBlockContent(blockContent.toString().trim());
-        } else {
-            String remainingLine = line.substring(braceIndex -1).trim();
-            String remainingLine2 = line.substring(braceIndex).trim();
-            KotlinScript.LOGGER.info("Handling possible else block: " + remainingLine);
-            KotlinScript.LOGGER.info("Handling possible else block: " + remainingLine2);
-            // After processing the if block, check for an else block on the same line
-
-            if (remainingLine.startsWith("else")) {
-                KotlinScript.LOGGER.info("Else block found on the same line");
-                handleElseBlock(scanner, remainingLine);
             } else {
-                // Check the next lines for an else statement
-                while (scanner.hasNextLine()) {
-                    String nextLine = scanner.nextLine().trim();
-                    if (nextLine.startsWith("else")) {
-                        KotlinScript.LOGGER.info("Else block found on the next line");
-                        handleElseBlock(scanner, nextLine);
-                        break;
-                    }
+                if (braceDepth > 0) { // Ensure we're not processing content outside of the current block
+                    blockContent.append(nextLine).append("\n");
                 }
+                if (nextLine.contains("{")) braceDepth++;
             }
+        }
+
+
+        if (!conditionResult || blockContent.length() > 0) {
+            KotlinScript.LOGGER.info("Executing if block content");
+            interpretBlockContent(blockContent.toString().trim());
         }
     }
 
+
     private void handleElseBlock(Scanner scanner, String line) throws FileNotFoundException {
         KotlinScript.LOGGER.info("Entering handleElseBlock with line: " + line);
-
-        // Find the opening brace for the else statement block
-        int braceIndex = line.indexOf('{');
-        if (braceIndex == -1) {
-            // If the opening brace is not on the same line, find it in subsequent lines
-            while (scanner.hasNextLine()) {
+        // Strip the initial 'else' and possibly trim leading whitespace before '{'
+        line = line.substring(4).trim();
+        if (!line.startsWith("{")) {
+            while (!line.startsWith("{") && scanner.hasNextLine()) {
                 line = scanner.nextLine().trim();
-                braceIndex = line.indexOf('{');
-                if (braceIndex != -1) {
-                    break;
-                }
             }
         }
 
-        if (braceIndex == -1) {
-            throw new RuntimeException("Syntax error: Missing opening brace for else statement block.");
+        if (!line.startsWith("{")) {
+            throw new RuntimeException("Syntax error: Missing opening brace for else block.");
         }
 
-        // Process the else statement block using handleNewScope
-        KotlinScript.LOGGER.info("Processing else block using handleNewScope");
-        handleNewScope(scanner, line.substring(braceIndex));
+        handleNewScope(scanner, line);
     }
     private void interpretBlockContent(String blockContent) throws FileNotFoundException {
         try (Scanner blockScanner = new Scanner(blockContent)) {
