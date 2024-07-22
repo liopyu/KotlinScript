@@ -32,8 +32,7 @@ public class KotlinScript {
             ArrayList<Token> tokens = Tokenizer.tokenize(script);
            tokens.forEach(System.out::println);
 
-            Executor executor = new Executor(tokens);
-            executor.execute();
+            new Executor(tokens);
         } catch (IOException e) {
             System.err.println("Error reading the file: " + e.getMessage());
         }
