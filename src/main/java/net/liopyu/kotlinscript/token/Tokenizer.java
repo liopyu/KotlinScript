@@ -3,36 +3,38 @@ import java.util.ArrayList;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 public class Tokenizer {
-    private static final String KEYWORD = "\\b(fun|val|var|if|else|for|return|break|continue|class|try|catch|finally|when|is|in)\\b";
-    private static final String IDENTIFIER = "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b";
-    private static final String LITERAL = "\\b\\d+\\b|\\b\\d+\\.\\d*\\b|\"(\\\\.|[^\"])*\"|'(\\\\.|[^'])*'";
-    private static final String OPERATOR = "[+\\-*/=]=?|!=|<=|>=|<|>|\\+\\+|\\-\\-|&&|\\|\\|";
-    private static final String PUNCTUATION = "[{}(),;\\[\\]]";
-    private static final String COMMENT = "//[^\n]*|/\\*.*?\\*/";
 
-    private static final Pattern PATTERN = Pattern.compile(
-            String.join("|", COMMENT, KEYWORD, IDENTIFIER, LITERAL, OPERATOR, PUNCTUATION)
-    );
-
-    public static ArrayList<Token> tokenize(String input) {
+    public static ArrayList<Token> tokenize(String script) {
         ArrayList<Token> tokens = new ArrayList<>();
-        Matcher matcher = PATTERN.matcher(input);
+        Pattern tokenPatterns = Pattern.compile(
+                "(?<KEYWORD>\\b(var|val|print)\\b)|" + // Keywords
+                        "(?<IDENTIFIER>[a-zA-Z_][a-zA-Z0-9_]*)|" + // Identifiers
+                        "(?<NUMBER>\\b\\d+\\.\\d+|\\b\\d+\\b)|" + // Numbers (including floating-point numbers)
+                        "(?<STRING>\"[^\"]*\")|" + // Strings
+                        "(?<OPERATOR>[=])|" + // Operators
+                        "(?<PARENTHESIS>[()])|" + // Parentheses
+                        "(?<WHITESPACE>\\s+)|" + // Whitespace
+                        "(?<OTHER>.)" // Any other character
+        );
+        Matcher matcher = tokenPatterns.matcher(script);
+
         while (matcher.find()) {
-            String text = matcher.group();
-            if (text.startsWith("//") || text.startsWith("/*")) {
-                tokens.add(new Token(text, Token.Type.COMMENT, matcher.start()));
-            } else if (text.matches(KEYWORD)) {
-                tokens.add(new Token(text, Token.Type.KEYWORD, matcher.start()));
-            } else if (text.matches(IDENTIFIER)) {
-                tokens.add(new Token(text, Token.Type.IDENTIFIER, matcher.start()));
-            } else if (text.matches(LITERAL)) {
-                tokens.add(new Token(text, Token.Type.LITERAL, matcher.start()));
-            } else if (text.matches(OPERATOR)) {
-                tokens.add(new Token(text, Token.Type.OPERATOR, matcher.start()));
-            } else if (text.matches(PUNCTUATION)) {
-                tokens.add(new Token(text, Token.Type.PUNCTUATION, matcher.start()));
-            } else if (text.trim().isEmpty()) {
-                tokens.add(new Token(text, Token.Type.WHITESPACE, matcher.start()));
+            if (matcher.group("KEYWORD") != null) {
+                tokens.add(new Token(TokenType.KEYWORD, matcher.group("KEYWORD")));
+            } else if (matcher.group("IDENTIFIER") != null) {
+                tokens.add(new Token(TokenType.IDENTIFIER, matcher.group("IDENTIFIER")));
+            } else if (matcher.group("NUMBER") != null) {
+                tokens.add(new Token(TokenType.NUMBER, matcher.group("NUMBER")));
+            } else if (matcher.group("STRING") != null) {
+                tokens.add(new Token(TokenType.STRING, matcher.group("STRING")));
+            } else if (matcher.group("OPERATOR") != null) {
+                tokens.add(new Token(TokenType.OPERATOR, matcher.group("OPERATOR")));
+            } else if (matcher.group("PARENTHESIS") != null) {
+                tokens.add(new Token(TokenType.PARENTHESIS, matcher.group("PARENTHESIS")));
+            } else if (matcher.group("WHITESPACE") != null) {
+                // Ignore whitespace
+            } else if (matcher.group("OTHER") != null) {
+                tokens.add(new Token(TokenType.OTHER, matcher.group("OTHER")));
             }
         }
         return tokens;

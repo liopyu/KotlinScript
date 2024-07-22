@@ -1,9 +1,11 @@
 package net.liopyu.kotlinscript;
 
 import com.mojang.logging.LogUtils;
+import net.liopyu.kotlinscript.ast.ASTNode;
 import net.liopyu.kotlinscript.token.Token;
 import net.liopyu.kotlinscript.token.Tokenizer;
 import net.liopyu.kotlinscript.util.Executor;
+import net.liopyu.kotlinscript.util.Parser;
 import net.minecraftforge.fml.common.Mod;
 import org.slf4j.Logger;
 
@@ -30,9 +32,13 @@ public class KotlinScript {
         try {
             String script = new String(Files.readAllBytes(Paths.get(path)));
             ArrayList<Token> tokens = Tokenizer.tokenize(script);
-           tokens.forEach(System.out::println);
+            tokens.forEach(System.out::println);
 
-            new Executor(tokens);
+            Parser parser = new Parser(tokens);
+            ArrayList<ASTNode> nodes = parser.parse();
+
+            Executor executor = new Executor();
+            executor.execute(nodes);
         } catch (IOException e) {
             System.err.println("Error reading the file: " + e.getMessage());
         }
