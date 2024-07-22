@@ -2,7 +2,6 @@ package net.liopyu.kotlinscript.token;
 import java.util.ArrayList;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
 public class Tokenizer {
     private static final String KEYWORD = "\\b(fun|val|var|if|else|for|return|break|continue|class|try|catch|finally|when|is|in)\\b";
     private static final String IDENTIFIER = "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b";
