@@ -1,4 +1,4 @@
-package net.liopyu.kotlinscript.util;
+package net.liopyu.kotlinscript.util.error;
 
 public class VariableNotFoundException extends RuntimeException {
     public VariableNotFoundException(String message) {

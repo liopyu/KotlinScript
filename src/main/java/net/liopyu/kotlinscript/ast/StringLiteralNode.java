@@ -5,17 +5,17 @@ import net.liopyu.kotlinscript.token.TokenType;
 import net.liopyu.kotlinscript.util.Parsable;
 import net.liopyu.kotlinscript.util.Parser;
 
-public class CommentNode extends ASTNode implements Parsable {
-    private String comment;
+public class StringLiteralNode extends ASTNode implements Parsable {
+    private String value;
 
-    public CommentNode() {}
+    public StringLiteralNode() {}
 
-    public CommentNode(String comment) {
-        this.comment = comment;
+    public StringLiteralNode(String value) {
+        this.value = value;
     }
 
-    public String getComment() {
-        return comment;
+    public String getValue() {
+        return value;
     }
 
     @Override
@@ -25,8 +25,8 @@ public class CommentNode extends ASTNode implements Parsable {
 
     @Override
     public ASTNode parse(Parser parser) {
-        Token commentToken = parser.consume(TokenType.COMMENT);
-        this.comment = commentToken.getValue();
+        Token token = parser.consume(TokenType.STRING);
+        this.value = token.getValue();
         return this;
     }
 }

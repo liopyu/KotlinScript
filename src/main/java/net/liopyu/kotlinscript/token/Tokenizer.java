@@ -1,10 +1,6 @@
 package net.liopyu.kotlinscript.token;
-import net.liopyu.kotlinscript.util.TokenPattern;
 
 import java.util.ArrayList;
-import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 public class Tokenizer {
     private final String script;
     private int currentPosition;
@@ -100,20 +96,22 @@ public class Tokenizer {
     }
 
     private Token readString(char quote) {
-        int start = currentPosition;
-        currentPosition++; // Skip the opening quote
+        int start = currentPosition + 1; // Start after the opening quote
+        currentPosition++; // Move past the opening quote
+
         while (currentPosition < script.length() && script.charAt(currentPosition) != quote) {
             if (script.charAt(currentPosition) == '\\') { // Handle escape sequences
-                currentPosition++;
+                currentPosition++; // Skip the escape character
             }
             currentPosition++;
         }
-        if (currentPosition < script.length()) {
-            currentPosition++; // Skip the closing quote
-        }
-        String string = script.substring(start, currentPosition);
+
+        String string = script.substring(start, currentPosition); // Extract the string without the quotes
+        currentPosition++; // Move past the closing quote
+
         return new Token(TokenType.STRING, string);
     }
+
 
     private Token readComment() {
         int start = currentPosition;
@@ -137,15 +135,44 @@ public class Tokenizer {
 
     private Token readOperatorOrPunctuation() {
         char ch = script.charAt(currentPosition);
-        currentPosition++;
-        return new Token(TokenType.OPERATOR, String.valueOf(ch));
+        currentPosition++;  // Advance the position past the character
+
+        switch (ch) {
+            case '(':
+                return new Token(TokenType.LEFT_PAREN, String.valueOf(ch));
+            case ')':
+                return new Token(TokenType.RIGHT_PAREN, String.valueOf(ch));
+            case '{':
+                return new Token(TokenType.LEFT_BRACE, String.valueOf(ch));
+            case '}':
+                return new Token(TokenType.RIGHT_BRACE, String.valueOf(ch));
+            case ':':
+                return new Token(TokenType.COLON, String.valueOf(ch));
+            case ',':
+                return new Token(TokenType.COMMA, String.valueOf(ch));
+            case '+':
+            case '-':
+            case '*':
+            case '/':
+            case '%':
+            case '&':
+            case '|':
+            case '^':
+                return new Token(TokenType.OPERATOR, String.valueOf(ch));  // Handle arithmetic and bitwise operators
+            default:
+                // If the character is not recognized, you might want to handle it as an error or as an 'other' type
+                return new Token(TokenType.OTHER, String.valueOf(ch));
+        }
     }
+
 
     private TokenType stringToKeyword(String identifier) {
         switch (identifier) {
             case "var":
-            case "val":
+                return TokenType.KEYWORD;
             case "print":
+                return TokenType.KEYWORD;
+            case "fun":
                 return TokenType.KEYWORD;
             default:
                 return null;
