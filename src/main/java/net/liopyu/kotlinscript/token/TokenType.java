@@ -1,0 +1,8 @@
+package net.liopyu.kotlinscript.token;
+
+public enum TokenType {
+    IDENTIFIER, NUMBER, STRING, KEYWORD,
+    PLUS, MINUS, MULTIPLY, DIVIDE, ASSIGN,
+    LEFT_PAREN, RIGHT_PAREN, LEFT_BRACE, RIGHT_BRACE,
+    SEMICOLON, COLON, COMMA, EOF, UNKNOWN, COMMENT
+}

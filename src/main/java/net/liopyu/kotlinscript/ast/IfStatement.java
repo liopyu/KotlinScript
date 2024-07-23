@@ -12,4 +12,13 @@ public class IfStatement extends ASTNode {
         this.thenBranch = thenBranch;
         this.elseBranch = elseBranch;
     }
+
+    @Override
+    public String toString() {
+        return "IfStatement{" +
+                "condition=" + condition +
+                ", thenBranch=" + thenBranch +
+                ", elseBranch=" + elseBranch +
+                '}';
+    }
 }

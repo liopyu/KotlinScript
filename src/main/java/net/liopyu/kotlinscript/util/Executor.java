@@ -18,31 +18,9 @@ public class Executor {
         currentScope = new Scope(null); // Global scope
         variables = new HashMap<>();
     }
-    public void executeScript(String filePath) throws IOException {
-        // Step 1: Read the KotlinScript file
-        String sourceCode = new String(Files.readAllBytes(Paths.get(filePath)));
-
-        // Step 2: Tokenization
-        Tokenizer tokenizer = new Tokenizer();
-        List<Tokenizer.Token> tokens = tokenizer.tokenize("val x = 10; fun main() { print(\"Hello, World!\") }");
-
-        //List<Tokenizer.Token> tokens = tokenizer.tokenize(sourceCode);
-        tokens.add(new Tokenizer.Token("EOF", ""));
-
-        // Step 3: Parsing
-        Parser parser = new Parser(tokens);
-        ASTNode program = parser.parse();
-
-        // Step 4: Semantic Analysis
-        Scope globalScope = new Scope(null); // Create a global scope
-        TypeChecker typeChecker = new TypeChecker(globalScope);
-        typeChecker.check(program);
-
-        // Step 5: Execution
-        execute(program);
-    }
 
     public void execute(ASTNode node) {
+        System.out.println("Executing node: " + node);
         if (node instanceof Program) {
             executeProgram((Program) node);
         } else if (node instanceof VariableDeclaration) {
@@ -71,7 +49,35 @@ public class Executor {
             throw new RuntimeException("Unknown AST node type: " + node.getClass());
         }
     }
+
+    private void executeProgram(Program program) {
+        System.out.println("Executing program");
+        for (ASTNode statement : program.statements) {
+            execute(statement);
+        }
+    }
+
+    private void executeVariableDeclaration(VariableDeclaration node) {
+        System.out.println("Executing variable declaration: " + node.name);
+        Object value = evaluate(node.initializer);
+        variables.put(node.name, value);
+        currentScope.declareVariable(node.name, value.getClass().getSimpleName());
+    }
+
+    private void executeFunctionDeclaration(FunctionDeclaration node) {
+        System.out.println("Executing function declaration: " + node.name);
+        currentScope.declareFunction(node.name, node.returnType);
+        variables.put(node.name, node); // Store the node itself for function calls
+    }
+
+    private void executePrintStatement(PrintStatement node) {
+        System.out.println("Executing print statement");
+        Object value = evaluate(node.expression);
+        System.out.println(value);
+    }
+
     private void executeBinaryOperation(BinaryOperation node) {
+        System.out.println("Executing binary operation: " + node.operator);
         Object left = evaluate(node.left);
         Object right = evaluate(node.right);
         switch (node.operator) {
@@ -98,32 +104,37 @@ public class Executor {
         }
     }
 
-
     private void executeFunctionCall(FunctionCall node) {
         FunctionDeclaration function = (FunctionDeclaration) variables.get(node.name);
         if (function == null) {
-            throw new RuntimeException("Function not found: " + node.name);
+            throw new RuntimeException("Function not defined: " + node.name);
         }
 
+        // Setup function scope
         Scope previousScope = currentScope;
-        currentScope = new Scope(previousScope); // Create a new scope for the function
+        currentScope = new Scope(previousScope);
 
-        for (int i = 0; i < function.parameters.size(); i++) {
+        // Assign arguments to parameters
+        if (node.arguments.size() != function.parameters.size()) {
+            throw new RuntimeException("Argument count mismatch for function " + node.name);
+        }
+
+        for (int i = 0; i < node.arguments.size(); i++) {
             String paramName = function.parameters.get(i);
-            ASTNode argument = node.arguments.get(i);
-            Object value = evaluate(argument);
-            variables.put(paramName, value);
-            currentScope.declareVariable(paramName, value.getClass().getSimpleName());
+            Object value = evaluate(node.arguments.get(i));
+            currentScope.declareVariable(paramName, (String) value);
         }
 
-        for (ASTNode statement : function.body) {
-            execute(statement);
-        }
+        // Execute function body
+        executeBlock(new Block(function.body));
 
-        currentScope = previousScope; // Restore the previous scope
+        // Restore scope
+        currentScope = previousScope;
     }
 
+
     private void executeIdentifier(Identifier node) {
+        System.out.println("Executing identifier: " + node.name);
         Object value = variables.get(node.name);
         if (value == null) {
             throw new RuntimeException("Variable not found: " + node.name);
@@ -132,32 +143,12 @@ public class Executor {
     }
 
     private void executeLiteral(Literal node) {
+        System.out.println("Executing literal: " + node.value);
         variables.put(node.toString(), node.value);
-    }
-    private void executeProgram(Program program) {
-        for (ASTNode statement : program.statements) {
-            execute(statement);
-        }
-    }
-
-    private void executeVariableDeclaration(VariableDeclaration node) {
-        Object value = evaluate(node.initializer);
-        variables.put(node.name, value);
-        currentScope.declareVariable(node.name, value.getClass().getSimpleName());
-    }
-
-    private void executeFunctionDeclaration(FunctionDeclaration node) {
-        // Store the function definition in the scope
-        currentScope.declareFunction(node.name, node.returnType);
-        variables.put(node.name, node); // Store the node itself for function calls
-    }
-
-    private void executePrintStatement(PrintStatement node) {
-        Object value = evaluate(node.expression);
-        System.out.println(value);
     }
 
     private Object evaluate(ASTNode node) {
+        System.out.println("Evaluating node: " + node);
         if (node instanceof Literal) {
             return ((Literal) node).value;
         } else if (node instanceof Identifier) {
@@ -174,6 +165,7 @@ public class Executor {
     }
 
     private Object evaluateBinaryOperation(BinaryOperation node) {
+        System.out.println("Evaluating binary operation: " + node.operator);
         Object left = evaluate(node.left);
         Object right = evaluate(node.right);
         switch (node.operator) {
@@ -195,6 +187,7 @@ public class Executor {
     }
 
     private Object evaluateFunctionCall(FunctionCall node) {
+        System.out.println("Evaluating function call: " + node.name);
         FunctionDeclaration function = (FunctionDeclaration) variables.get(node.name);
         if (function == null) {
             throw new RuntimeException("Function not found: " + node.name);
@@ -220,6 +213,7 @@ public class Executor {
     }
 
     private Object evaluateUnaryOperation(UnaryOperation node) {
+        System.out.println("Evaluating unary operation: " + node.operator);
         Object right = evaluate(node.right);
         switch (node.operator) {
             case "-":
@@ -232,6 +226,7 @@ public class Executor {
     }
 
     private void executeIfStatement(IfStatement node) {
+        System.out.println("Executing if statement");
         Object condition = evaluate(node.condition);
         if ((boolean) condition) {
             for (ASTNode statement : node.thenBranch) {
@@ -245,6 +240,7 @@ public class Executor {
     }
 
     private void executeWhileStatement(WhileStatement node) {
+        System.out.println("Executing while statement");
         while ((boolean) evaluate(node.condition)) {
             for (ASTNode statement : node.body) {
                 execute(statement);
@@ -253,17 +249,46 @@ public class Executor {
     }
 
     private void executeReturnStatement(ReturnStatement node) {
+        System.out.println("Executing return statement");
         // Handle return statements if necessary
         // This would depend on your execution model and function handling
     }
 
     private void executeBlock(Block node) {
+        System.out.println("Executing block");
         Scope previousScope = currentScope;
         currentScope = new Scope(previousScope); // Create a new scope for the block
         for (ASTNode statement : node.statements) {
             execute(statement);
         }
         currentScope = previousScope; // Restore the previous scope
+    }
+
+    public void executeScript(String filePath) throws IOException {
+        System.out.println("Executing script from file: " + filePath);
+
+        // Step 1: Read the KotlinScript file
+        String sourceCode = new String(Files.readAllBytes(Paths.get(filePath)));
+        System.out.println("Source code: " + sourceCode);
+
+        // Step 2: Tokenization
+        Tokenizer tokenizer = new Tokenizer();
+        List<Tokenizer.Token> tokens = tokenizer.tokenize(sourceCode);
+        tokens.add(new Tokenizer.Token("EOF", ""));
+        System.out.println("Tokens: " + tokens);
+
+        // Step 3: Parsing
+        Parser parser = new Parser(tokens);
+        ASTNode program = parser.parse();
+        System.out.println("AST: " + program);
+
+        // Step 4: Semantic Analysis
+        Scope globalScope = new Scope(null); // Create a global scope
+        TypeChecker typeChecker = new TypeChecker(globalScope);
+        typeChecker.check(program);
+
+        // Step 5: Execution
+        execute(program);
     }
 
     public static void main(String[] args) throws IOException {

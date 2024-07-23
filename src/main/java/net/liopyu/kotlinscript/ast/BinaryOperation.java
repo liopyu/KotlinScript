@@ -10,4 +10,13 @@ public class BinaryOperation extends ASTNode {
         this.operator = operator;
         this.right = right;
     }
+
+    @Override
+    public String toString() {
+        return "BinaryOperation{" +
+                "left=" + left +
+                ", operator='" + operator + '\'' +
+                ", right=" + right +
+                '}';
+    }
 }
