@@ -3,6 +3,7 @@ package net.liopyu.kotlinscript.util;
 import net.liopyu.kotlinscript.ast.ASTNode;
 
 import java.util.List;
+import java.util.function.Function;
 
 public class GrammarPattern {
     private List<Object> pattern;

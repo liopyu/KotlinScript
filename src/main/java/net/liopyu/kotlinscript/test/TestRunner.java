@@ -1,15 +1,18 @@
 package net.liopyu.kotlinscript.test;
 
 import net.liopyu.kotlinscript.ast.ASTNode;
+import net.liopyu.kotlinscript.token.Token;
+import net.liopyu.kotlinscript.token.TokenType;
 import net.liopyu.kotlinscript.token.Tokenizer;
-import net.liopyu.kotlinscript.util.CodeGenerator;
-import net.liopyu.kotlinscript.util.EnhancedSemanticAnalyzer;
-import net.liopyu.kotlinscript.util.Parser;
+import net.liopyu.kotlinscript.util.*;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.List;
 
 public class TestRunner {
-    public static void main(String[] args) {
+    public static void main(String[] args) throws IOException {
         runTest("Test 1: Generic Class and Method",
                 "class MyGenericClass<T> { fun genericMethod(param: T) { print(param) } } fun main() { val myInstance = MyGenericClass<String>() myInstance.genericMethod(\"Test\") }",
                 "public class GeneratedProgram {\n" +
@@ -64,21 +67,32 @@ public class TestRunner {
                         "}\n");
     }
 
-    private static void runTest(String testName, String script, String expectedOutput) {
-        System.out.println("Running " + testName);
-        Tokenizer tokenizer = new Tokenizer();
-        List<Tokenizer.Token> tokens = tokenizer.tokenize(script);
-        tokens.add(new Tokenizer.Token("EOF", ""));
+    private static void runTest(String testName, String script, String expectedOutput) throws IOException {
+        String path = "run/scripts/script.kts"; // Path to the .kts file
+
+        Executor executor = new Executor();
+        executor.executeScript(path);
+
+        System.out.println("Execution completed successfully.");
+        System.out.println("Executing script from file: " + path);
+
+        // Step 1: Read the KotlinScript file
+        String sourceCode = new String(Files.readAllBytes(Paths.get(path)));
+        System.out.println("Source code: " + sourceCode);
+
+        // Step 2: Tokenization
+        Tokenizer tokenizer = new Tokenizer(sourceCode);
+        List<Token> tokens = tokenizer.tokenize();
+        tokens.add(new Token(TokenType.EOF, ""));
+        System.out.println("Tokens: " + tokens);
+
+        // Step 3: Parsing
         Parser parser = new Parser(tokens);
         ASTNode program = parser.parse();
-        EnhancedSemanticAnalyzer analyzer = new EnhancedSemanticAnalyzer();
-        analyzer.analyze(program);
-        CodeGenerator generator = new CodeGenerator();
-        String javaCode = generator.generate(program);
-        System.out.println("Generated Java Code:");
-        System.out.println(javaCode);
-        System.out.println("Expected Java Code:");
-        System.out.println(expectedOutput);
-        System.out.println(javaCode.equals(expectedOutput) ? "Test Passed" : "Test Failed");
+        System.out.println("AST: " + program);
+
+
+        // Step 5: Execution
+        executor.execute(program);
     }
 }

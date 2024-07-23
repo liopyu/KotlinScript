@@ -5,27 +5,49 @@ import java.util.Map;
 
 public class Scope {
     private final Scope parent;
-    private final Map<String, String> variables;
+    private final Map<String, String> variableTypes;
+    private final Map<String, Object> variableValues;
     private final Map<String, String> functions;
-    private String currentClass; // Add this field to track the current class
+    private String currentClass;
 
     public Scope(Scope parent) {
         this.parent = parent;
-        this.variables = new HashMap<>();
+        this.variableTypes = new HashMap<>();
+        this.variableValues = new HashMap<>();
         this.functions = new HashMap<>();
         this.currentClass = parent != null ? parent.currentClass : null;
     }
 
     public void declareVariable(String name, String type) {
-        variables.put(name, type);
+        variableTypes.put(name, type);
     }
 
-    public String resolveVariable(String name) {
-        if (variables.containsKey(name)) {
-            return variables.get(name);
+    public String resolveVariableType(String name) {
+        if (variableTypes.containsKey(name)) {
+            return variableTypes.get(name);
         }
         if (parent != null) {
-            return parent.resolveVariable(name);
+            return parent.resolveVariableType(name);
+        }
+        return null;
+    }
+
+    public void setVariable(String name, Object value) {
+        if (variableTypes.containsKey(name)) {
+            variableValues.put(name, value);
+        } else if (parent != null) {
+            parent.setVariable(name, value);
+        } else {
+            throw new RuntimeException("Variable not declared: " + name);
+        }
+    }
+
+    public Object getVariable(String name) {
+        if (variableValues.containsKey(name)) {
+            return variableValues.get(name);
+        }
+        if (parent != null) {
+            return parent.getVariable(name);
         }
         return null;
     }

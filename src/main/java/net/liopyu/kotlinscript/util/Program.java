@@ -10,4 +10,14 @@ public class Program extends ASTNode {
     public Program(List<ASTNode> statements) {
         this.statements = statements;
     }
+
+    @Override
+    public void parse(ParserContext context) {
+
+    }
+
+    @Override
+    public Object eval(Scope scope) {
+        return null;
+    }
 }

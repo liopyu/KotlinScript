@@ -1,5 +1,8 @@
 package net.liopyu.kotlinscript.ast;
 
+import net.liopyu.kotlinscript.util.ParserContext;
+import net.liopyu.kotlinscript.util.Scope;
+
 import java.util.List;
 
 public class CaseClause extends ASTNode {
@@ -9,5 +12,15 @@ public class CaseClause extends ASTNode {
     public CaseClause(ASTNode value, List<ASTNode> statements) {
         this.value = value;
         this.statements = statements;
+    }
+
+    @Override
+    public void parse(ParserContext context) {
+
+    }
+
+    @Override
+    public Object eval(Scope scope) {
+        return null;
     }
 }

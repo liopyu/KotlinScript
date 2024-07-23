@@ -1,5 +1,8 @@
 package net.liopyu.kotlinscript.ast;
 
+import net.liopyu.kotlinscript.util.ParserContext;
+import net.liopyu.kotlinscript.util.Scope;
+
 import java.util.List;
 
 public class FunctionDeclaration extends ASTNode {
@@ -18,5 +21,15 @@ public class FunctionDeclaration extends ASTNode {
     @Override
     public String toString() {
         return String.format("FunctionDeclaration(name=%s, parameters=%s, body=%s, returnType=%s)", name, parameters, body, returnType);
+    }
+
+    @Override
+    public void parse(ParserContext context) {
+
+    }
+
+    @Override
+    public Object eval(Scope scope) {
+        return null;
     }
 }

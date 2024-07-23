@@ -1,5 +1,8 @@
 package net.liopyu.kotlinscript.ast;
 
+import net.liopyu.kotlinscript.util.ParserContext;
+import net.liopyu.kotlinscript.util.Scope;
+
 public class ArrayDeclaration extends ASTNode {
     public final String name;
     public final ASTNode size;
@@ -9,5 +12,15 @@ public class ArrayDeclaration extends ASTNode {
         this.name = name;
         this.size = size;
         this.elementType = elementType;
+    }
+
+    @Override
+    public void parse(ParserContext context) {
+
+    }
+
+    @Override
+    public Object eval(Scope scope) {
+        return null;
     }
 }

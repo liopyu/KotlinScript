@@ -1,6 +1,8 @@
 package net.liopyu.kotlinscript.util;
 
 import net.liopyu.kotlinscript.ast.*;
+import net.liopyu.kotlinscript.token.Token;
+import net.liopyu.kotlinscript.token.TokenType;
 import net.liopyu.kotlinscript.token.Tokenizer;
 
 import java.io.IOException;
@@ -29,22 +31,22 @@ public class Executor {
             executeFunctionDeclaration((FunctionDeclaration) node);
         } else if (node instanceof PrintStatement) {
             executePrintStatement((PrintStatement) node);
-        } else if (node instanceof BinaryOperation) {
-            executeBinaryOperation((BinaryOperation) node);
+        } else if (node instanceof BinaryOperationNode) {
+            executeBinaryOperation((BinaryOperationNode) node);
         } else if (node instanceof FunctionCall) {
             executeFunctionCall((FunctionCall) node);
-        } else if (node instanceof Identifier) {
-            executeIdentifier((Identifier) node);
-        } else if (node instanceof Literal) {
-            executeLiteral((Literal) node);
-        } else if (node instanceof IfStatement) {
-            executeIfStatement((IfStatement) node);
+        } else if (node instanceof IdentifierNode) {
+            executeIdentifier((IdentifierNode) node);
+        } else if (node instanceof LiteralNode) {
+            executeLiteral((LiteralNode) node);
+        } else if (node instanceof IfStatementNode) {
+            executeIfStatement((IfStatementNode) node);
         } else if (node instanceof WhileStatement) {
             executeWhileStatement((WhileStatement) node);
         } else if (node instanceof ReturnStatement) {
             executeReturnStatement((ReturnStatement) node);
-        } else if (node instanceof Block) {
-            executeBlock((Block) node);
+        } else if (node instanceof BlockNode) {
+            executeBlock((BlockNode) node);
         } else {
             throw new RuntimeException("Unknown AST node type: " + node.getClass());
         }
@@ -60,6 +62,9 @@ public class Executor {
     private void executeVariableDeclaration(VariableDeclaration node) {
         System.out.println("Executing variable declaration: " + node.name);
         Object value = evaluate(node.initializer);
+        if (value == null) {
+            throw new RuntimeException("Variable initializer evaluated to null for variable: " + node.name);
+        }
         variables.put(node.name, value);
         currentScope.declareVariable(node.name, value.getClass().getSimpleName());
     }
@@ -76,27 +81,27 @@ public class Executor {
         System.out.println(value);
     }
 
-    private void executeBinaryOperation(BinaryOperation node) {
+    private void executeBinaryOperation(BinaryOperationNode node) {
         System.out.println("Executing binary operation: " + node.operator);
         Object left = evaluate(node.left);
         Object right = evaluate(node.right);
-        switch (node.operator) {
-            case "+":
+        switch (node.operator.type) {
+            case PLUS:
                 variables.put(node.toString(), (int) left + (int) right);
                 break;
-            case "-":
+            case MINUS:
                 variables.put(node.toString(), (int) left - (int) right);
                 break;
-            case "*":
+            case STAR:
                 variables.put(node.toString(), (int) left * (int) right);
                 break;
-            case "/":
+            case SLASH:
                 variables.put(node.toString(), (int) left / (int) right);
                 break;
-            case "==":
+            case EQUAL_EQUAL:
                 variables.put(node.toString(), left.equals(right));
                 break;
-            case "!=":
+            case BANG_EQUAL:
                 variables.put(node.toString(), !left.equals(right));
                 break;
             default:
@@ -122,18 +127,18 @@ public class Executor {
         for (int i = 0; i < node.arguments.size(); i++) {
             String paramName = function.parameters.get(i);
             Object value = evaluate(node.arguments.get(i));
-            currentScope.declareVariable(paramName, (String) value);
+            currentScope.declareVariable(paramName, value.getClass().getSimpleName());
+            currentScope.setVariable(paramName, value);
         }
 
         // Execute function body
-        executeBlock(new Block(function.body));
+        executeBlock(new BlockNode(function.body));
 
         // Restore scope
         currentScope = previousScope;
     }
 
-
-    private void executeIdentifier(Identifier node) {
+    private void executeIdentifier(IdentifierNode node) {
         System.out.println("Executing identifier: " + node.name);
         Object value = variables.get(node.name);
         if (value == null) {
@@ -142,44 +147,44 @@ public class Executor {
         variables.put(node.toString(), value);
     }
 
-    private void executeLiteral(Literal node) {
+    private void executeLiteral(LiteralNode node) {
         System.out.println("Executing literal: " + node.value);
         variables.put(node.toString(), node.value);
     }
 
     private Object evaluate(ASTNode node) {
         System.out.println("Evaluating node: " + node);
-        if (node instanceof Literal) {
-            return ((Literal) node).value;
-        } else if (node instanceof Identifier) {
-            return variables.get(((Identifier) node).name);
-        } else if (node instanceof BinaryOperation) {
-            return evaluateBinaryOperation((BinaryOperation) node);
+        if (node instanceof LiteralNode) {
+            return ((LiteralNode) node).value;
+        } else if (node instanceof IdentifierNode) {
+            return variables.get(((IdentifierNode) node).name);
+        } else if (node instanceof BinaryOperationNode) {
+            return evaluateBinaryOperation((BinaryOperationNode) node);
         } else if (node instanceof FunctionCall) {
             return evaluateFunctionCall((FunctionCall) node);
-        } else if (node instanceof UnaryOperation) {
-            return evaluateUnaryOperation((UnaryOperation) node);
+        } else if (node instanceof UnaryOperationNode) {
+            return evaluateUnaryOperation((UnaryOperationNode) node);
         } else {
             throw new RuntimeException("Unknown AST node type: " + node.getClass());
         }
     }
 
-    private Object evaluateBinaryOperation(BinaryOperation node) {
+    private Object evaluateBinaryOperation(BinaryOperationNode node) {
         System.out.println("Evaluating binary operation: " + node.operator);
         Object left = evaluate(node.left);
         Object right = evaluate(node.right);
-        switch (node.operator) {
-            case "+":
+        switch (node.operator.type) {
+            case PLUS:
                 return (int) left + (int) right;
-            case "-":
+            case MINUS:
                 return (int) left - (int) right;
-            case "*":
+            case STAR:
                 return (int) left * (int) right;
-            case "/":
+            case SLASH:
                 return (int) left / (int) right;
-            case "==":
+            case EQUAL_EQUAL:
                 return left.equals(right);
-            case "!=":
+            case BANG_EQUAL:
                 return !left.equals(right);
             default:
                 throw new RuntimeException("Unknown operator: " + node.operator);
@@ -200,8 +205,8 @@ public class Executor {
             String paramName = function.parameters.get(i);
             ASTNode argument = node.arguments.get(i);
             Object value = evaluate(argument);
-            variables.put(paramName, value);
             currentScope.declareVariable(paramName, value.getClass().getSimpleName());
+            currentScope.setVariable(paramName, value);
         }
 
         for (ASTNode statement : function.body) {
@@ -212,20 +217,20 @@ public class Executor {
         return null;
     }
 
-    private Object evaluateUnaryOperation(UnaryOperation node) {
-        System.out.println("Evaluating unary operation: " + node.operator);
-        Object right = evaluate(node.right);
-        switch (node.operator) {
-            case "-":
+    private Object evaluateUnaryOperation(UnaryOperationNode node) {
+        System.out.println("Evaluating unary operation: " + node.getOperator());
+        Object right = evaluate(node.getRight());
+        switch (node.getOperator()) {
+            case MINUS:
                 return -(int) right;
-            case "!":
+            case BANG:
                 return !(boolean) right;
             default:
-                throw new RuntimeException("Unknown operator: " + node.operator);
+                throw new RuntimeException("Unknown operator: " + node.getOperator());
         }
     }
 
-    private void executeIfStatement(IfStatement node) {
+    private void executeIfStatement(IfStatementNode node) {
         System.out.println("Executing if statement");
         Object condition = evaluate(node.condition);
         if ((boolean) condition) {
@@ -254,7 +259,7 @@ public class Executor {
         // This would depend on your execution model and function handling
     }
 
-    private void executeBlock(Block node) {
+    private void executeBlock(BlockNode node) {
         System.out.println("Executing block");
         Scope previousScope = currentScope;
         currentScope = new Scope(previousScope); // Create a new scope for the block
@@ -272,20 +277,15 @@ public class Executor {
         System.out.println("Source code: " + sourceCode);
 
         // Step 2: Tokenization
-        Tokenizer tokenizer = new Tokenizer();
-        List<Tokenizer.Token> tokens = tokenizer.tokenize(sourceCode);
-        tokens.add(new Tokenizer.Token("EOF", ""));
+        Tokenizer tokenizer = new Tokenizer(sourceCode);
+        List<Token> tokens = tokenizer.tokenize();
+        tokens.add(new Token(TokenType.EOF, ""));
         System.out.println("Tokens: " + tokens);
 
         // Step 3: Parsing
         Parser parser = new Parser(tokens);
         ASTNode program = parser.parse();
         System.out.println("AST: " + program);
-
-        // Step 4: Semantic Analysis
-        Scope globalScope = new Scope(null); // Create a global scope
-        TypeChecker typeChecker = new TypeChecker(globalScope);
-        typeChecker.check(program);
 
         // Step 5: Execution
         execute(program);

@@ -1,5 +1,8 @@
 package net.liopyu.kotlinscript.ast;
 
+import net.liopyu.kotlinscript.util.ParserContext;
+import net.liopyu.kotlinscript.util.Scope;
+
 import java.util.List;
 
 public class TryCatchFinally extends ASTNode {
@@ -11,5 +14,15 @@ public class TryCatchFinally extends ASTNode {
         this.tryBlock = tryBlock;
         this.catchBlock = catchBlock;
         this.finallyBlock = finallyBlock;
+    }
+
+    @Override
+    public void parse(ParserContext context) {
+
+    }
+
+    @Override
+    public Object eval(Scope scope) {
+        return null;
     }
 }

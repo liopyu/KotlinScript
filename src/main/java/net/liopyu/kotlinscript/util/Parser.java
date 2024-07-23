@@ -1,16 +1,20 @@
 package net.liopyu.kotlinscript.util;
 
 import net.liopyu.kotlinscript.ast.*;
+import net.liopyu.kotlinscript.token.Token;
+import net.liopyu.kotlinscript.token.TokenType;
 import net.liopyu.kotlinscript.token.Tokenizer;
 
 import java.util.*;
 
 public class Parser {
-    private List<Tokenizer.Token> tokens;
+    private List<Token> tokens;
     private int current = 0;
+    private ParserContext context;
 
-    public Parser(List<Tokenizer.Token> tokens) {
+    public Parser(List<Token> tokens) {
         this.tokens = tokens;
+        this.context = new ParserContext(tokens);
     }
 
     public ASTNode parse() {
@@ -26,32 +30,32 @@ public class Parser {
         return new Program(statements);
     }
 
-
-
     private ASTNode declaration() {
         System.out.println("Parsing declaration at token: " + peek());
         if (isAtEnd()) {
             return null;
         }
-        if (match("KEYWORD", "val", "var")) {
+        if (match(TokenType.KEYWORD_VAL) || match(TokenType.KEYWORD_VAR)) {
             return variableDeclaration();
         }
-        if (match("KEYWORD", "fun")) {
+        if (match(TokenType.KEYWORD_FUN)) {
             return functionDeclaration();
         }
         return statement();
     }
 
-
-
     private ASTNode variableDeclaration() {
         System.out.println("Parsing variable declaration");
-        String name = consume("IDENTIFIER", "Expect variable name.").value;
-        consume("SYMBOL", "=", "Expect '=' after variable name.");
-        ASTNode initializer = expression();
-        // Optional semicolon; do not throw an error if not found
-        if (check("SYMBOL", ";")) {
-            consume("SYMBOL", ";");
+        if (!match(TokenType.IDENTIFIER)) {
+            throw new ParseException(peek(), "Expect variable name.");
+        }
+        String name = previous().value;  // Assuming match advances the token
+
+        consume(TokenType.ASSIGN, "Expect '=' after variable name");
+        ASTNode initializer = expression();  // Parse the initializer expression
+
+        if (check(TokenType.SEMICOLON)) {
+            consume(TokenType.SEMICOLON, "Expect ';' after variable declaration");
         }
         return new VariableDeclaration(name, initializer);
     }
@@ -60,78 +64,76 @@ public class Parser {
 
     private ASTNode functionDeclaration() {
         System.out.println("Parsing function declaration");
-        String name = consume("IDENTIFIER", "Expect function name.").value;
-        consume("SYMBOL", "(", "Expect '(' after function name.");
+        String name = consume(TokenType.IDENTIFIER, "Expect function name.").value;
+        consume(TokenType.RIGHT_PAREN, "(", "Expect '(' after function name.");
         List<String> parameters = new ArrayList<>();
-        if (!check("SYMBOL", ")")) {
+        if (!check(TokenType.LEFT_PAREN, ")")) {
             do {
-                parameters.add(consume("IDENTIFIER", "Expect parameter name.").value);
-            } while (match("SYMBOL", ","));
+                parameters.add(consume(TokenType.IDENTIFIER, "Expect parameter name.").value);
+            } while (match(TokenType.COMMA, ","));
         }
-        consume("SYMBOL", ")", "Expect ')' after parameters.");
+        consume(TokenType.LEFT_PAREN, ")", "Expect ')' after parameters.");
         String returnType = "void"; // Default return type
-        consume("SYMBOL", "{", "Expect '{' before function body.");
+        consume(TokenType.LEFT_BRACE, "{", "Expect '{' before function body.");
         List<ASTNode> body = new ArrayList<>();
-        while (!check("SYMBOL", "}")) {
+        while (!check(TokenType.RIGHT_BRACE, "}")) {
             body.add(declaration());
         }
-        consume("SYMBOL", "}", "Expect '}' after function body.");
+        consume(TokenType.RIGHT_BRACE, "}", "Expect '}' after function body.");
         return new FunctionDeclaration(name, parameters, body, returnType);
     }
 
     private ASTNode block() {
         List<ASTNode> statements = new ArrayList<>();
-        while (!check("SYMBOL", "}")) {
+        while (!check(TokenType.RIGHT_BRACE, "}")) {
             statements.add(declaration());
         }
-        consume("SYMBOL", "}", "Expect '}' after block.");
-        return new Block(statements);
+        consume(TokenType.RIGHT_BRACE, "}", "Expect '}' after block.");
+        return new BlockNode(statements);
     }
 
     private ASTNode statement() {
         System.out.println("Parsing statement at token: " + peek());
-        if (match("KEYWORD", "print")) {
+        if (match(TokenType.KEYWORD_PRINT)) {
             return printStatement();
         }
-        if (match("KEYWORD", "if")) {
+        if (match(TokenType.KEYWORD_IF)) {
             return ifStatement();
         }
         return expressionStatement();
     }
+
     private ASTNode ifStatement() {
         System.out.println("Parsing if statement");
-        consume("SYMBOL", "(", "Expect '(' after 'if'.");
-        ASTNode condition = expression();  // Parse the condition expression
-        consume("SYMBOL", ")", "Expect ')' after if condition.");  // This is where it fails
-
+        consume(TokenType.LEFT_PAREN, "(", "Expect '(' after 'if'.");
+        ASTNode condition = expression();
+        consume(TokenType.RIGHT_PAREN, ")", "Expect ')' after if condition.");
         System.out.println("Parsed if condition: " + condition);
 
-        consume("SYMBOL", "{", "Expect '{' before if body.");
+        consume(TokenType.LEFT_BRACE, "{", "Expect '{' before if body.");
         List<ASTNode> thenBranch = new ArrayList<>();
-        while (!check("SYMBOL", "}")) {
+        while (!check(TokenType.RIGHT_BRACE, "}")) {
             thenBranch.add(statement());
         }
-        consume("SYMBOL", "}", "Expect '}' after if body.");
+        consume(TokenType.RIGHT_BRACE, "}", "Expect '}' after if body.");
 
         List<ASTNode> elseBranch = new ArrayList<>();
-        if (match("KEYWORD", "else")) {
-            consume("SYMBOL", "{", "Expect '{' before else body.");
-            while (!check("SYMBOL", "}")) {
+        if (match(TokenType.KEYWORD, "else")) {
+            consume(TokenType.LEFT_BRACE, "{", "Expect '{' before else body.");
+            while (!check(TokenType.RIGHT_BRACE, "}")) {
                 elseBranch.add(statement());
             }
-            consume("SYMBOL", "}", "Expect '}' after else body.");
+            consume(TokenType.RIGHT_BRACE, "}", "Expect '}' after else body.");
         }
 
-        return new IfStatement(condition, thenBranch, elseBranch);
+        return new IfStatementNode();
     }
-
-
-
-
 
     private ASTNode printStatement() {
         System.out.println("Parsing print statement");
+        consume(TokenType.LEFT_PAREN, "Expect '(' after 'print'.");
         ASTNode value = expression();
+        consume(TokenType.RIGHT_PAREN, "Expect ')' after expression.");
         return new PrintStatement(value);
     }
 
@@ -142,7 +144,6 @@ public class Parser {
         return expr;
     }
 
-
     private ASTNode expression() {
         System.out.println("Parsing expression");
         return assignment();
@@ -150,11 +151,11 @@ public class Parser {
 
     private ASTNode assignment() {
         ASTNode expr = ternary();
-        while (match("SYMBOL", "=")) {
+        while (match(TokenType.ASSIGN, "=")) {
             System.out.println("Parsing assignment");
-            ASTNode value = expression();  // Recursive call to handle right-hand side of assignment
-            if (expr instanceof Identifier) {
-                String name = ((Identifier) expr).name;
+            ASTNode value = expression();
+            if (expr instanceof IdentifierNode) {
+                String name = ((IdentifierNode) expr).name;
                 return new Assignment(name, value);
             }
             throw error(peek(), "Invalid assignment target.");
@@ -162,40 +163,36 @@ public class Parser {
         return expr;
     }
 
-
-
     private ASTNode ternary() {
         System.out.println("Parsing ternary");
         ASTNode expr = or();
-        if (match("SYMBOL", "?")) {
+        if (match(TokenType.QUESTION_MARK, "?")) {
             ASTNode trueExpr = expression();
-            consume("SYMBOL", ":", "Expect ':' after true branch of ternary.");
+            consume(TokenType.COLON, ":", "Expect ':' after true branch of ternary.");
             ASTNode falseExpr = ternary();
             return new TernaryOperation(expr, trueExpr, falseExpr);
         }
         return expr;
     }
 
-
     private ASTNode or() {
         System.out.println("Parsing or");
         ASTNode expr = and();
-        while (match("SYMBOL", "||")) {
-            Tokenizer.Token operator = previous();
+        while (match(TokenType.OR, "||")) {
+            Token operator = previous();
             ASTNode right = and();
-            expr = new BinaryOperation(expr, operator.value, right);
+            expr = new BinaryOperationNode(expr, operator, right);
         }
         return expr;
     }
 
-
     private ASTNode and() {
         System.out.println("Parsing and");
         ASTNode expr = equality();
-        while (match("SYMBOL", "&&")) {
-            Tokenizer.Token operator = previous();
+        while (match(TokenType.AND)) {
+            Token operator = previous();
             ASTNode right = equality();
-            expr = new BinaryOperation(expr, operator.value, right);
+            expr = new BinaryOperationNode(expr, operator, right); // Assuming BinaryOperationNode takes left, operator, and right ASTNodes
         }
         return expr;
     }
@@ -204,37 +201,48 @@ public class Parser {
     private ASTNode equality() {
         System.out.println("Parsing equality");
         ASTNode expr = comparison();
-        while (match("SYMBOL", "==", "!=")) {
-            Tokenizer.Token operator = previous();
+        while (match(TokenType.EQUAL_EQUAL, TokenType.BANG_EQUAL)) {
+            Token operator = previous();
             ASTNode right = comparison();
-            expr = new BinaryOperation(expr, operator.value, right);
+            expr = new BinaryOperationNode(expr, operator, right);
         }
         return expr;
     }
-
-
+    private boolean match(TokenType type) {
+            if (check(type)) {
+                advance();
+                return true;
+            }
+        return false;
+    }
+    private boolean match(TokenType... types) {
+        for (TokenType type : types) {
+            if (check(type)) {
+                advance();
+                return true;
+            }
+        }
+        return false;
+    }
     private ASTNode comparison() {
         System.out.println("Parsing comparison");
         ASTNode expr = addition();
-        while (match("SYMBOL", ">", ">=", "<", "<=")) {
-            Tokenizer.Token operator = previous();
+        while (match(TokenType.GREATER, TokenType.GREATER_EQUAL,  TokenType.LESS, TokenType.LESS_EQUAL)) {
+            Token operator = previous();
             ASTNode right = addition();
-            expr = new BinaryOperation(expr, operator.value, right);
+            expr = new BinaryOperationNode(expr, operator, right);
             System.out.println("Parsed comparison operation: " + expr);
         }
         return expr;
     }
 
-
-
-
     private ASTNode addition() {
         System.out.println("Parsing addition");
         ASTNode expr = multiplication();
-        while (match("SYMBOL", "+", "-")) {
-            Tokenizer.Token operator = previous();
+        while (match(TokenType.PLUS, TokenType.MINUS)) {
+            Token operator = previous();
             ASTNode right = multiplication();
-            expr = new BinaryOperation(expr, operator.value, right);
+            expr = new BinaryOperationNode(expr, operator, right);
         }
         return expr;
     }
@@ -242,18 +250,18 @@ public class Parser {
     private ASTNode multiplication() {
         System.out.println("Parsing multiplication");
         ASTNode expr = unary();
-        while (match("SYMBOL", "*", "/")) {
-            Tokenizer.Token operator = previous();
+        while (match(TokenType.STAR, TokenType.SLASH)) {
+            Token operator = previous();
             ASTNode right = unary();
-            expr = new BinaryOperation(expr, operator.value, right);
+            expr = new BinaryOperationNode(expr, operator, right);
         }
         return expr;
     }
 
     private ASTNode unary() {
         System.out.println("Parsing unary");
-        if (match("SYMBOL", "-", "!")) {
-            Tokenizer.Token operator = previous();
+        if (match(TokenType.MINUS, TokenType.BANG)) {
+            Token operator = previous();
             ASTNode right = unary();
             return new UnaryOperation(operator.value, right);
         }
@@ -261,34 +269,40 @@ public class Parser {
     }
 
     private ASTNode primary() {
-        System.out.println("Parsing primary. Current token: " + peek());
-        if (isAtEnd()) {
-            throw error(peek(), "Unexpected end of input.");
+        System.out.println("Parsing primary. Current token: " + context.peek());
+        if (context.isAtEnd()) {
+            throw new ParseException(context.peek(), "Unexpected end of input.");
         }
 
-        if (match("NUMBER")) {
-            System.out.println("Parsed number literal: " + previous().value);
-            return new Literal(previous().value);  // Ensuring the value is correctly interpreted
+        if (context.match(TokenType.NUMBER)) {
+            Token token = context.previous();  // Get the last matched token, which should be the number
+            LiteralNode node = new LiteralNode(Integer.parseInt(token.value));
+            System.out.println("Parsed number literal: " + node.value);
+            return node;
         }
 
-        if (match("STRING")) {
-            System.out.println("Parsed string literal: " + previous().value);
-            return new Literal(previous().value);
+        if (context.match(TokenType.STRING)) {
+            Token token = context.previous();  // Get the last matched token, which should be the string
+            LiteralNode node = new LiteralNode(token.value);
+            System.out.println("Parsed string literal: " + node.value);
+            return node;
         }
 
-        if (match("IDENTIFIER")) {
-            System.out.println("Parsed identifier: " + previous().value);
-            return new Identifier(previous().value);
+        if (context.match(TokenType.IDENTIFIER)) {
+            Token token = context.previous();  // Get the last matched token, which should be the identifier
+            IdentifierNode node = new IdentifierNode(token.value);
+            System.out.println("Parsed identifier: " + node.name);
+            return node;
         }
 
-        if (match("SYMBOL", "(")) {
+        if (context.match(TokenType.LEFT_PAREN)) {
             System.out.println("Parsed open parenthesis");
-            ASTNode expr = expression();
-            consume("SYMBOL", ")", "Expect ')' after expression.");
+            ASTNode expr = expression();  // Ensure this call to expression() is correctly implemented
+            context.consume(TokenType.RIGHT_PAREN, "Expect ')' after expression.");
             return expr;
         }
 
-        throw error(peek(), "Expect expression.");
+        throw new ParseException(context.peek(), "Expect expression.");
     }
 
 
@@ -296,10 +310,9 @@ public class Parser {
         System.out.println("Current token: " + peek());
     }
 
-
-    private boolean match(String type, String... values) {
+    private boolean match(TokenType type, String... values) {
         if (isAtEnd()) return false;
-        if (peek().type.equals(type) && (values.length == 0 || Arrays.asList(values).contains(peek().value))) {
+        if (peek().type == type && (values.length == 0 || Arrays.asList(values).contains(peek().value))) {
             advance();
             System.out.println("Matched " + type + " with values " + Arrays.toString(values));
             return true;
@@ -307,61 +320,46 @@ public class Parser {
         return false;
     }
 
-
-
-
-    private boolean check(String type, String value) {
+    private boolean check(TokenType type, String value) {
         if (isAtEnd()) return false;
-        return peek().type.equals(type) && peek().value.equals(value);
+        return peek().type == type && peek().value.equals(value);
     }
 
-    private boolean check(String type) {
+    private boolean check(TokenType type) {
         if (isAtEnd()) return false;
-        return peek().type.equals(type);
+        return peek().type == type;
     }
 
-    private Tokenizer.Token advance() {
+    private Token advance() {
         if (!isAtEnd()) current++;
         return previous();
     }
 
     private boolean isAtEnd() {
-        return peek().type.equals("EOF");
+        return peek().type == TokenType.EOF;
     }
 
-
-    private Tokenizer.Token peek() {
+    private Token peek() {
         return tokens.get(current);
     }
-    private Tokenizer.Token previous() {
+
+    private Token previous() {
         return tokens.get(current - 1);
     }
 
-    private Tokenizer.Token consume(String type, String value, String message) {
-        if (check(type, value)) {
-            return advance();
-        } else {
-            throw new ParseException(peek(), message);
-        }
+    private Token consume(TokenType type, String value, String message) {
+        if (check(type, value)) return advance();
+        throw new ParseException(peek(), message);
     }
 
-
-    private Tokenizer.Token consume(String type, String message) {
+    private Token consume(TokenType type, String message) {
         if (check(type)) return advance();
         throw error(peek(), message);
     }
 
-    private ParseException error(Tokenizer.Token token, String message) {
+    private ParseException error(Token token, String message) {
         return new ParseException(token, message);
     }
 
 
-    public static class ParseException extends RuntimeException {
-        public final Tokenizer.Token token;
-
-        public ParseException(Tokenizer.Token token, String message) {
-            super(message);
-            this.token = token;
-        }
-    }
 }
