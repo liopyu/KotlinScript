@@ -7,6 +7,7 @@ import net.liopyu.kotlinscript.ast.binary.AdditionNode;
 import net.liopyu.kotlinscript.ast.binary.DivisionNode;
 import net.liopyu.kotlinscript.ast.binary.MultiplicationNode;
 import net.liopyu.kotlinscript.ast.binary.SubtractionNode;
+import net.liopyu.kotlinscript.ast.expression.FunctionDeclarationNode;
 import net.liopyu.kotlinscript.ast.reserved.CommentNode;
 import net.liopyu.kotlinscript.ast.reserved.IdentifierNode;
 import net.liopyu.kotlinscript.ast.reserved.PrintNode;
@@ -40,36 +41,51 @@ public class Parser {
         if (currentTokenIndex >= tokens.size()) {
             return null;
         }
+
         Token token = tokens.get(currentTokenIndex);
-        switch (token.getType()) {
-            case VAL:
-                if (token.getValue().equals("val")) {
-                    return new VariableDeclarationNode(null, null).parse(this);
+        Parsable node = null;
+
+        switch (token.getType().getKind()) {
+            case KEYWORD:
+                switch (token.getValue()) {
+                    case "val":
+                        node = new VariableDeclarationNode(null, null);
+                        break;
+                    case "var":
+                        node = new VariableDeclarationNode(null,null);
+                        break;
+                    case "print":
+                        node = new PrintNode((ASTNode) null);
+                        break;
+                    case "fun":
+                        node = new FunctionDeclarationNode();
+                        break;
+                    default:
+                        throw new IllegalArgumentException("Unknown keyword: " + token.getValue());
                 }
                 break;
-            case VAR:
-                if (token.getValue().equals("var")) {
-                    return new VariableDeclarationNode(null, null).parse(this);
+            case BRACKET:
+                if (token.getType() == TokenType.LPAREN){
+                    node = parseExpression();
+                }else if (token.getType() == TokenType.LBRACE) {
+                    node = new BlockNode();
                 }
                 break;
-            case PRINT:
-                if (token.getValue().equals("print")) {
-                    return new PrintNode(null).parse(this);
+            case LITERAL:
+                System.out.println(token.getType());
+            case SPECIAL:
+                if (token.getType() == TokenType.COMMENT) {
+                    node = new CommentNode(null);
                 }
                 break;
-            case LBRACE:
-                if (token.getValue().equals("{")) {
-                    BlockNode node = new BlockNode();
-                    return node.parse(this);
-                }
-                break;
-            case COMMENT:
-                return new CommentNode(null).parse(this);
             default:
-                currentTokenIndex++;
+                node = parseExpression();  // Handle expressions by default
                 break;
         }
-        return null;
+        if (node == null) {
+            throw new VariableNotFoundException("Node not found: " + token.getPos().toString());
+        }
+        return node.parse(this);
     }
 
     public ASTNode parseExpression() {
@@ -77,44 +93,50 @@ public class Parser {
         Stack<Token> operatorStack = new Stack<>();
 
         while (currentTokenIndex < tokens.size()) {
-            Token token = getNextToken(); // This will also advance the current position
+            Token token = tokens.get(currentTokenIndex);
 
             switch (token.getType()) {
                 case FLOATING:
+                    nodeStack.push(new NumericLiteralNode(Double.parseDouble(token.getValue()), token.getPos()));
+                    currentTokenIndex++;
+                    break;
                 case IDENTIFIER:
+                    nodeStack.push(new IdentifierNode(token.getValue(), token.getPos()));
+                    currentTokenIndex++;
+                    break;
                 case STRING:
                     nodeStack.push(new StringLiteralNode(token.getValue()));
+                    currentTokenIndex++;
                     break;
                 case OPERATOR:
                     while (!operatorStack.isEmpty() && precedence(operatorStack.peek()) >= precedence(token)) {
                         processOperator(nodeStack, operatorStack.pop());
                     }
                     operatorStack.push(token);
+                    currentTokenIndex++;
                     break;
                 case LPAREN:
                     operatorStack.push(token);
+                    currentTokenIndex++;
                     break;
                 case RPAREN:
-                    if (operatorStack.isEmpty() || operatorStack.peek().getType() != TokenType.LPAREN) {
-                        throw new RuntimeException("Mismatched parentheses: No matching LPAREN for RPAREN.");
-                    }
                     while (!operatorStack.isEmpty() && operatorStack.peek().getType() != TokenType.LPAREN) {
+                        if (operatorStack.peek().getType() == TokenType.RPAREN) {
+                            consume(TokenType.RPAREN);
+                            break;
+                        }
                         processOperator(nodeStack, operatorStack.pop());
                     }
-                    if (!operatorStack.isEmpty() && operatorStack.peek().getType() == TokenType.LPAREN) {
+                    /*if (!operatorStack.isEmpty() && operatorStack.peek().getType() == TokenType.LPAREN) {
                         operatorStack.pop();
-                    }
-                    if (operatorStack.isEmpty() || (operatorStack.peek().getType() != TokenType.OPERATOR && operatorStack.peek().getType() != TokenType.LPAREN)) {
-                        if (!nodeStack.isEmpty()) {
-                            return nodeStack.pop();
-                        }
-                    }
-                    break;
-                case EOF:
-                    KotlinScript.LOGGER.info("end of file");
+                    } else {
+                        throw new VariableNotFoundException("Mismatched parentheses");
+                    }*/
+                    operatorStack.push(token);
+                    currentTokenIndex++;
                     break;
                 default:
-                    throw new RuntimeException("Unexpected token type in expression: " + token);
+                    throw new VariableNotFoundException("Unexpected token type in expression: " + token.getType());
             }
         }
 
@@ -124,6 +146,7 @@ public class Parser {
 
         return nodeStack.isEmpty() ? null : nodeStack.pop();
     }
+
 
     public Token getNextToken() {
         if (currentTokenIndex < tokens.size()) {

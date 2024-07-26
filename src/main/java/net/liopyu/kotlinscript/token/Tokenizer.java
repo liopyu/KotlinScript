@@ -10,7 +10,7 @@ public class Tokenizer {
     private int currentLine;
     private int currentColumn;
     private Token nextToken;
-
+    private TokenPos tokenPos = new TokenPos(currentLine,currentColumn);
     public Tokenizer(String script) {
         this.script = script;
         this.currentPosition = 0;
@@ -19,6 +19,12 @@ public class Tokenizer {
         advance(); // Initialize the first token
     }
 
+    public TokenPos getTokenPos() {
+        return tokenPos;
+    }
+    public void setTokenPos(int line, int column) {
+        this.tokenPos = new TokenPos(line,column);
+    }
     private void advance() {
         nextToken = getToken();
     }
@@ -50,31 +56,33 @@ public class Tokenizer {
 
     private Token getToken() {
         if (currentPosition >= script.length()) {
-            return new Token(TokenType.EOF, "", new TokenPos(currentLine, currentColumn));
+            this.setTokenPos(currentLine, currentColumn);
+            return null;
         }
 
         char ch = script.charAt(currentPosition);
-        TokenPos pos = new TokenPos(currentLine, currentColumn);
+        this.setTokenPos(currentLine, currentColumn);
 
         // Skip whitespace
         while (isWhitespace(ch)) {
             advancePosition(ch);
             if (currentPosition >= script.length()) {
-                return new Token(TokenType.EOF, "", new TokenPos(currentLine, currentColumn));
+                this.setTokenPos(currentLine, currentColumn);
+                return new Token(TokenType.EOF, "", tokenPos);
             }
             ch = script.charAt(currentPosition);
         }
 
         if (isAlpha(ch) || ch == '_') {
-            return readIdentifierOrKeyword(pos);
+            return readIdentifierOrKeyword(tokenPos);
         } else if (isDigit(ch)) {
-            return readNumber(pos);
+            return readNumber(tokenPos);
         } else if (ch == '"' || ch == '\'') {
-            return readString(ch, pos);
+            return readString(ch, tokenPos);
         } else if (ch == '/' && currentPosition + 1 < script.length() && (script.charAt(currentPosition + 1) == '/' || script.charAt(currentPosition + 1) == '*')) {
-            return readComment(pos);
+            return readComment(tokenPos);
         } else {
-            return generateToken(pos);
+            return generateToken(tokenPos);
         }
     }
 
@@ -161,112 +169,60 @@ public class Tokenizer {
 
     public static TokenType getTokenType(String identifier) {
         switch (identifier) {
-            case "!":
-                return TokenType.NOT;
-            case "!=":
-                return TokenType.NE;
-            case "!==":
-                return TokenType.NE_STRICT;
-            case "%":
-                return TokenType.MOD;
-            case "%=":
-                return TokenType.ASSIGN_MOD;
-            case "&":
-                return TokenType.BIT_AND;
-            case "&&":
-                return TokenType.AND;
-            case "&=":
-                return TokenType.ASSIGN_BIT_AND;
-            case "(":
-                return TokenType.LPAREN;
-            case ")":
-                return TokenType.RPAREN;
-            case "*":
-                return TokenType.MUL;
-            case "*=":
-                return TokenType.ASSIGN_MUL;
-            case "+":
-                return TokenType.POS;
-            case "++":
-                return TokenType.INCPREFIX;
-            case "+=":
-                return TokenType.ASSIGN_ADD;
-            case ",":
-                return TokenType.COMMARIGHT;
-            case "-":
-                return TokenType.NEG;
-            case "--":
-                return TokenType.DECPREFIX;
-            case "-=":
-                return TokenType.ASSIGN_SUB;
-            case ".":
-                return TokenType.PERIOD;
-            case "...":
-                return TokenType.ELLIPSIS;
-            case "/":
-                return TokenType.DIV;
-            case "/=":
-                return TokenType.ASSIGN_DIV;
-            case ":":
-                return TokenType.COLON;
-            case ";":
-                return TokenType.SEMICOLON;
-            case "<":
-                return TokenType.LT;
-            case "<<":
-                return TokenType.SHL;
-            case "<<=":
-                return TokenType.ASSIGN_SHL;
-            case "<=":
-                return TokenType.LE;
-            case "=":
-                return TokenType.ASSIGN;
-            case "==":
-                return TokenType.EQ;
-            case "===":
-                return TokenType.EQ_STRICT;
-            case "=>":
-                return TokenType.ARROW;
-            case ">":
-                return TokenType.GT;
-            case ">=":
-                return TokenType.GE;
-            case ">>":
-                return TokenType.SAR;
-            case ">>=":
-                return TokenType.ASSIGN_SAR;
-            case ">>>":
-                return TokenType.SHR;
-            case ">>>=":
-                return TokenType.ASSIGN_SHR;
-            case "?":
-                return TokenType.TERNARY;
-            case "[":
-                return TokenType.LBRACKET;
-            case "]":
-                return TokenType.RBRACKET;
-            case "^":
-                return TokenType.BIT_XOR;
-            case "^=":
-                return TokenType.ASSIGN_BIT_XOR;
-            case "{":
-                return TokenType.LBRACE;
-            case "|":
-                return TokenType.BIT_OR;
-            case "|=":
-                return TokenType.ASSIGN_BIT_OR;
-            case "||":
-                return TokenType.OR;
-            case "}":
-                return TokenType.RBRACE;
-            case "~":
-                return TokenType.BIT_NOT;
-            case "print":
-                return TokenType.PRINT;
-            case "var":
-                return TokenType.VAR;
-            case "val":
-                return TokenType.VAL;
+            // Add cases for all token types
+            case "!": return TokenType.NOT;
+            case "!=": return TokenType.NE;
+            case "!==": return TokenType.NE_STRICT;
+            case "%": return TokenType.MOD;
+            case "%=": return TokenType.ASSIGN_MOD;
+            case "&": return TokenType.BIT_AND;
+            case "&&": return TokenType.AND;
+            case "&=": return TokenType.ASSIGN_BIT_AND;
+            case "(": return TokenType.LPAREN;
+            case ")": return TokenType.RPAREN;
+            case "*": return TokenType.MUL;
+            case "*=": return TokenType.ASSIGN_MUL;
+            case "+": return TokenType.ADD;
+            case "++": return TokenType.INCPREFIX;
+            case "+=": return TokenType.ASSIGN_ADD;
+            case ",": return TokenType.COMMARIGHT;
+            case "-": return TokenType.SUB;
+            case "--": return TokenType.DECPREFIX;
+            case "-=": return TokenType.ASSIGN_SUB;
+            case ".": return TokenType.PERIOD;
+            case "...": return TokenType.ELLIPSIS;
+            case "/": return TokenType.DIV;
+            case "/=": return TokenType.ASSIGN_DIV;
+            case ":": return TokenType.COLON;
+            case ";": return TokenType.SEMICOLON;
+            case "<": return TokenType.LT;
+            case "<<": return TokenType.SHL;
+            case "<<=": return TokenType.ASSIGN_SHL;
+            case "<=": return TokenType.LE;
+            case "=": return TokenType.ASSIGN;
+            case "==": return TokenType.EQ;
+            case "===": return TokenType.EQ_STRICT;
+            case "=>": return TokenType.ARROW;
+            case ">": return TokenType.GT;
+            case ">=": return TokenType.GE;
+            case ">>": return TokenType.SAR;
+            case ">>=": return TokenType.ASSIGN_SAR;
+            case ">>>": return TokenType.SHR;
+            case ">>>=": return TokenType.ASSIGN_SHR;
+            case "?": return TokenType.TERNARY;
+            case "[": return TokenType.LBRACKET;
+            case "]": return TokenType.RBRACKET;
+            case "^": return TokenType.BIT_XOR;
+            case "^=": return TokenType.ASSIGN_BIT_XOR;
+            case "{": return TokenType.LBRACE;
+            case "|": return TokenType.BIT_OR;
+            case "|=": return TokenType.ASSIGN_BIT_OR;
+            case "||": return TokenType.OR;
+            case "}": return TokenType.RBRACE;
+            case "~": return TokenType.BIT_NOT;
+            case "print": return TokenType.PRINT;
+            case "var": return TokenType.VAR;
+            case "val": return TokenType.VAL;
             default:
                 if (FLOATING_PATTERN.matcher(identifier).matches()) {
                     return TokenType.FLOATING;
@@ -472,11 +428,17 @@ public class Tokenizer {
     }
 
     private char peekNextChar() {
-        return script.charAt(currentPosition);
+        if (currentPosition + 1 < script.length()) {
+            return script.charAt(currentPosition + 1);
+        }
+        return '\0';
     }
 
     private char peekNextNextChar() {
-        return script.charAt(currentPosition + 1);
+        if (currentPosition + 2 < script.length()) {
+            return script.charAt(currentPosition + 2);
+        }
+        return '\0';
     }
 
     public static ArrayList<Token> tokenize(String script) {
