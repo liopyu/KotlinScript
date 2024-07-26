@@ -1,3 +1,3 @@
-fun func() {
+/*fun func() {
     print("test")
-}
+}*/
