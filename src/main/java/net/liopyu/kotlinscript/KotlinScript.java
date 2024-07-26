@@ -32,7 +32,7 @@ public class KotlinScript {
         try {
             String script = new String(Files.readAllBytes(Paths.get(path)));
             ArrayList<Token> tokens = Tokenizer.tokenize(script);
-           // tokens.forEach(System.out::println);
+            tokens.forEach(System.out::println);
 
             Parser parser = new Parser(tokens);
             ArrayList<ASTNode> nodes = parser.parse();
@@ -43,4 +43,5 @@ public class KotlinScript {
             System.err.println("Error reading the file: " + e.getMessage());
         }
     }
+
 }

@@ -1,4 +1,4 @@
-package net.liopyu.kotlinscript.util;
+package net.liopyu.kotlinscript.token;
 
 import net.liopyu.kotlinscript.token.TokenType;
 

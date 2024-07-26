@@ -1,7 +1,3 @@
-
-{
-    var t = "test"
+fun func() {
+    print("test")
 }
-/*print(t)*/
-
-

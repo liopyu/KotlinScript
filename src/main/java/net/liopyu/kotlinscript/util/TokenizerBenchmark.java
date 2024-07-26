@@ -1,5 +1,6 @@
 package net.liopyu.kotlinscript.util;
 
+import net.liopyu.kotlinscript.ast.ASTNode;
 import net.liopyu.kotlinscript.token.Token;
 import net.liopyu.kotlinscript.token.Tokenizer;
 
@@ -51,7 +52,11 @@ public class TokenizerBenchmark {
         long endTime = System.nanoTime();
 
         System.out.println("Character-based tokenizer time: " + (endTime - startTime) + " ns");
+        Parser parser = new Parser(tokens);
+        ArrayList<ASTNode> nodes = parser.parse();
 
+        Executor executor = new Executor();
+        executor.execute(nodes);
         // Print tokens to verify correctness
         tokens.forEach(System.out::println);
     }
