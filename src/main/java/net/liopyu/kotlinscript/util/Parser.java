@@ -41,6 +41,9 @@ public class Parser {
         if (match(TokenType.KEYWORD_FUN)) {
             return functionDeclaration();
         }
+        if (match(TokenType.KEYWORD_PRINT)) {
+            return printStatement();
+        }
         return statement();
     }
 
@@ -146,7 +149,18 @@ public class Parser {
 
     private ASTNode expression() {
         System.out.println("Parsing expression");
-        return assignment();
+        TokenType type = peek().type;
+        switch (type) {
+            case STRING:
+                current++;
+                return new LiteralNode(peek().value);
+            case ASSIGN:
+                return assignment();
+            case RIGHT_PAREN:
+                consume(type, "Expected \")\" but got: " + type);
+                return assignment();
+        }
+        throw new RuntimeException("Expected token of type: " + type.name());
     }
 
     private ASTNode assignment() {
@@ -278,6 +292,12 @@ public class Parser {
             Token token = context.previous();  // Get the last matched token, which should be the number
             LiteralNode node = new LiteralNode(Integer.parseInt(token.value));
             System.out.println("Parsed number literal: " + node.value);
+            return node;
+        }
+        if (context.match(TokenType.KEYWORD_PRINT)) {
+            Token token = context.previous();  // Get the last matched token, which should be the number
+            PrintStatement node = new PrintStatement(new LiteralNode(token.value));
+            System.out.println("Parsed print statement: " + node.expression);
             return node;
         }
 

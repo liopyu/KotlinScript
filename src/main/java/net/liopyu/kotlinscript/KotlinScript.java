@@ -6,7 +6,6 @@ import net.liopyu.kotlinscript.token.Tokenizer;
 import net.liopyu.kotlinscript.util.Executor;
 import net.liopyu.kotlinscript.util.Parser;
 import net.liopyu.kotlinscript.util.Scope;
-import net.liopyu.kotlinscript.util.TypeChecker;
 import net.minecraftforge.fml.common.Mod;
 import org.slf4j.Logger;
 

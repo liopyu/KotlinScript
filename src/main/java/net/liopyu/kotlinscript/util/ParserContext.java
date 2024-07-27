@@ -7,6 +7,7 @@ import net.liopyu.kotlinscript.token.Tokenizer;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Stack;
 
 public class ParserContext {
     public final List<Token> tokens;
@@ -23,12 +24,84 @@ public class ParserContext {
         this.tokens = other.tokens;
         this.current = other.current;
     }
-
     public ASTNode parseExpression() {
-        // Assuming parsePrimary is called for simplicity
-        return parsePrimary();
-    }
+        Stack<ASTNode> nodeStack = new Stack<>();
+        Stack<Token> operatorStack = new Stack<>();
 
+        while (current < tokens.size()) {
+            Token token = tokens.get(current);
+
+            switch (token.type) {
+                case NUMBER:
+                    parsePrimary();
+                    break;
+                case IDENTIFIER:
+                    nodeStack.push(new IdentifierNode(token.value));
+                    current++;
+                    break;
+                case STRING:
+                    nodeStack.push(new LiteralNode(token.value));
+                    current++;
+                    break;
+                case PLUS:
+                case MINUS:
+                case MULTIPLY:
+                case DIVIDE:
+                case ASSIGN:
+                    while (!operatorStack.isEmpty() && precedence(operatorStack.peek()) >= precedence(token)) {
+                        processOperator(nodeStack, operatorStack.pop());
+                    }
+                    operatorStack.push(token);
+                    current++;
+                    break;
+                case LEFT_PAREN:
+                    operatorStack.push(token);
+                    current++;
+                    break;
+                case RIGHT_PAREN:
+                    while (!operatorStack.isEmpty() && operatorStack.peek().type != TokenType.LEFT_PAREN) {
+                        processOperator(nodeStack, operatorStack.pop());
+                    }
+                    if (!operatorStack.isEmpty() && operatorStack.peek().type == TokenType.LEFT_PAREN) {
+                        operatorStack.pop(); // Pop the LEFT_PAREN
+                    }
+                    current++;
+                    break;
+                default:
+                    throw new RuntimeException("Unexpected token type in expression: " + token.type);
+            }
+        }
+
+        while (!operatorStack.isEmpty()) {
+            processOperator(nodeStack, operatorStack.pop());
+        }
+
+        return nodeStack.isEmpty() ? null : nodeStack.pop();
+    }
+    private int precedence(Token operator) {
+        // Return the precedence based on the operator
+        switch (operator.value) {
+            case "+":
+            case "-":
+                return 1;
+            case "*":
+            case "/":
+                return 2;
+            default:
+                return 0;
+        }
+    }
+    private void processOperator(Stack<ASTNode> nodeStack, Token operator) {
+        if (nodeStack.size() < 2) {
+            throw new IllegalStateException("Insufficient values in the expression stack for operation " + operator.value);
+        }
+
+        ASTNode right = nodeStack.pop(); // Right operand
+        ASTNode left = nodeStack.pop();  // Left operand
+
+        // Create a new BinaryExpressionNode with the left and right operands and the operator string
+        nodeStack.push(new BinaryOperationNode(left, operator, right));
+    }
     public ASTNode parsePrimary() {
         Token token = peek();
         if (token.type == TokenType.NUMBER || token.type == TokenType.STRING) {

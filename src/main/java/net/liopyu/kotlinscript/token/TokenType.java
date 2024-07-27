@@ -5,6 +5,7 @@ public enum TokenType {
     NUMBER("", 0, false),
     STRING("", 0, false),
     KEYWORD("", 0, false),
+    OPERATOR("\\", 14, true),
 
     // Operators
     PLUS("+", 14, true),

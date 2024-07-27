@@ -9,6 +9,14 @@ public class Token {
         this.value = value;
     }
 
+    public String getValue() {
+        return value;
+    }
+
+    public TokenType getType() {
+        return type;
+    }
+
     @Override
     public String toString() {
         return String.format("Token(type=%s, value=%s)", type, value);
