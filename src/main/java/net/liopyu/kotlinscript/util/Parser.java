@@ -121,17 +121,18 @@ public class Parser {
                     break;
                 case RPAREN:
                     while (!operatorStack.isEmpty() && operatorStack.peek().getType() != TokenType.LPAREN) {
+                        System.out.print(operatorStack.peek().getType());
                         if (operatorStack.peek().getType() == TokenType.RPAREN) {
                             consume(TokenType.RPAREN);
                             break;
                         }
                         processOperator(nodeStack, operatorStack.pop());
                     }
-                    /*if (!operatorStack.isEmpty() && operatorStack.peek().getType() == TokenType.LPAREN) {
+                    if (!operatorStack.isEmpty() && operatorStack.peek().getType() == TokenType.LPAREN) {
                         operatorStack.pop();
                     } else {
                         throw new VariableNotFoundException("Mismatched parentheses");
-                    }*/
+                    }
                     operatorStack.push(token);
                     currentTokenIndex++;
                     break;
