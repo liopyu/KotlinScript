@@ -10,6 +10,17 @@ public class KotlinScript {
     public static final Logger LOGGER = LogUtils.getLogger();
     public static final String MODID = "kotlinscript";
     public KotlinScript() {
-        KtMain.otherMain();
-        }
+        var ks =  new KotlinScriptInterpreter();
+        ks.loadScriptsFromFolder();
+        ks.evaluateScripts();
+    }
+
+    public static void main(String[] args) {
+       var ks =  new KotlinScriptInterpreter();
+        ks.loadScriptsFromFolder();
+        ks.evaluateScripts();
+      /*  System.setProperty("idea.use.native.fs.for.win", "false");
+    System.setProperty("idea.home.path", "C:/Program Files/JetBrains/IntelliJ IDEA Community Edition 2023.3.3");
+      */
+    }
 }
