@@ -2,6 +2,8 @@ pluginManagement {
     repositories {
         mavenCentral()
         gradlePluginPortal()
+        maven("https://maven.minecraftforge.net")
+        maven ("https://maven.parchmentmc.org")
     }
 }
 
@@ -10,7 +12,3 @@ plugins {
 }
 
 rootProject.name = "KotlinScript"
-include("script-definition")
-include("host")
-include("api")
-include("script-runtime")
