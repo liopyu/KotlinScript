@@ -28,9 +28,9 @@ internal data class KotlinScript(val script: String) {
         "util",
     ).map {
         if (it.isEmpty())
-            ""
+            "org.spongepowered.api.*"
         else
-            ""
+            "org.spongepowered.api.$it.*"
     }
 
     private val defaultImports = listOf(
@@ -40,8 +40,8 @@ internal data class KotlinScript(val script: String) {
         //Sponge Packages
         "org.apache.logging.log4j.Logger",
         //Kyori
-        /*"net.kyori.adventure.text.*",
-        "me.zodd.*",*/
+        "net.kyori.adventure.text.*",
+        "me.zodd.*",
     )
 
     private fun mergeImports(): List<String> {

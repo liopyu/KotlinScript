@@ -1,10 +1,10 @@
 plugins {
-    //id("common")
+    id("common")
 }
 
 dependencies {
-    //compileOnly("org.spongepowered:spongeapi:8.1.0")
-    //compileOnly("net.kyori:adventure-api:4.14.0")
+    compileOnly("org.spongepowered:spongeapi:8.1.0")
+    compileOnly("net.kyori:adventure-api:4.14.0")
 }
 
 tasks.jar {

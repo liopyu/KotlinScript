@@ -1,51 +1,61 @@
 package me.zodd
 
-import com.mojang.logging.LogUtils
-import net.minecraftforge.event.server.ServerStartingEvent
-import net.minecraftforge.event.server.ServerStoppedEvent
-import net.minecraftforge.eventbus.api.SubscribeEvent
-import net.minecraftforge.fml.common.Mod
-import net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent
+import com.google.inject.Inject
+import org.apache.logging.log4j.Logger
+import org.spongepowered.api.config.DefaultConfig
+import org.spongepowered.api.event.Listener
+import org.spongepowered.api.event.lifecycle.ConstructPluginEvent
+import org.spongepowered.api.event.lifecycle.RefreshGameEvent
+import org.spongepowered.configurate.CommentedConfigurationNode
+import org.spongepowered.configurate.ConfigurateException
+import org.spongepowered.configurate.reference.ConfigurationReference
+import org.spongepowered.plugin.PluginContainer
+import org.spongepowered.plugin.builtin.jvm.Plugin
 
-//import thedarkcolour.kotlinforforge.forge.MOD_CONTEXT
-
-@Mod("kotlinscript")
-class Host {
+@Plugin("scripting-host")
+class Host @Inject internal constructor(
+    container: PluginContainer,
+    private val logger: Logger,
+    @DefaultConfig(sharedRoot = false)
+    private val reference: ConfigurationReference<CommentedConfigurationNode>,
+) {
 
     companion object {
-        val logger = LogUtils.getLogger()
+        lateinit var logger: Logger
+        lateinit var plugin: PluginContainer
+        lateinit var config: ScriptingConfig
     }
 
     init {
-        //val type = KotlinType
-        //KotlinScriptLoader.loadScripts()
-        // Register mod setup events
-        /*val modEventBus = MOD_CONTEXT.getKEventBus()
-        modEventBus.addListener(this::setup)
+        plugin = container
+        Companion.logger = logger
 
-        // Register server events
-        MinecraftForge.EVENT_BUS.register(this)
-
-        logger.info("Kotlin Scripting Host initializing...")*/
+        //Plugin references
+        API(container, logger)
     }
 
-    private fun setup(event: FMLCommonSetupEvent) {
-        // Register any common setup tasks here
-        logger.info("Setting up common mod components...")
+    private fun loadConfig(): ScriptingConfig {
+        val ref = reference.referenceTo(ScriptingConfig::class.java)
+        reference.save()
+        return ref.get() ?: throw ConfigurateException("ScriptConfig failed to load!")
     }
 
-    @SubscribeEvent
-    fun onServerStart(event: ServerStartingEvent) {
-        logger.info("Starting Kotlin Scripting Host server...")
+    @Listener
+    fun onConstruct(event: ConstructPluginEvent) {
+        logger.info("Loading Kotlin Scripting Host...")
+
+        config = loadConfig()
+
         KotlinScriptLoader.loadScripts()
         logger.info("Finished loading scripts...")
     }
 
-    @SubscribeEvent
-    fun onServerStop(event: ServerStoppedEvent) {
-        // Handle server shutdown if needed
-        logger.info("Stopping Kotlin Scripting Host server...")
+    @Listener
+    fun onGameRefresh(event: RefreshGameEvent) {
+        //todo: handle script reloads here
+        config = loadConfig()
     }
-
-    // Additional event listeners can be added as needed
 }
+
+
+
