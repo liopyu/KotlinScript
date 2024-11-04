@@ -28,7 +28,7 @@ internal data class KotlinScript(val script: String) {
         compilerOptions("-jvm-target", "17")
         defaultImports(*mergeImports().toTypedArray())
         jvm {
-            dependenciesFromClassloader(classLoader = this::class.java.classLoader, wholeClasspath = true)
+            dependenciesFromClassloader(wholeClasspath = true)
         }
     }
 

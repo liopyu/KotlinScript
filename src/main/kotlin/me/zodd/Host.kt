@@ -8,11 +8,15 @@ import net.minecraftforge.fml.common.Mod
 import net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext
 
+fun main() {
+    KotlinScriptLoader.loadScripts()
+}
 @Mod("kotlinscript")
 class Host {
     companion object {
         val logger = LogUtils.getLogger()
     }
+
     init {
         KotlinScriptLoader.loadScripts()
         val modEventBus = FMLJavaModLoadingContext.get().modEventBus

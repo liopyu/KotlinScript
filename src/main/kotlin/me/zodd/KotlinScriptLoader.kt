@@ -10,7 +10,7 @@ internal object KotlinScriptLoader {
         scriptFileDir.mkdirs()
         scriptFileDir.listFiles()?.forEach { file ->
             Host.logger.info("Loading script : ${file.name}...")
-            KotlinScript(file.readText()).eval().logResult(file.name)
+            KotlinScript(file.readText()).eval()/*.logResult(file.name)*/
         }
     }
     private fun ResultWithDiagnostics<EvaluationResult>.logResult(name: String) {

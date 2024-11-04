@@ -83,18 +83,21 @@ dependencies {
     annotationProcessor("io.github.llamalad7:mixinextras-common:0.2.1")?.let { implementation(it) }
     annotationProcessor("org.spongepowered:mixin:${mixinVersion}:processor")
     //Shadows
-    shadow(kotlin("reflect"))
+    /*shadow(kotlin("reflect"))*/
 
-    shadow("org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.7.3")
+    /*shadow("org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.7.3")
     shadow("org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.7.3")
     shadow("org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.8.0")
-    shadow("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")
+    shadow("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")*/
 
     shadow(kotlin("scripting-jvm"))
     shadow(kotlin("scripting-jvm-host"))
-    //implementation("thedarkcolour:kotlinforforge:4.10.0")
-    shadow("org.jetbrains.kotlin:kotlin-stdlib:1.8.0")
-    shadow("org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.0")
+
+    implementation(kotlin("scripting-jvm"))
+    implementation(kotlin("scripting-jvm-host"))
+    implementation("thedarkcolour:kotlinforforge:4.10.0")
+    /*shadow("org.jetbrains.kotlin:kotlin-stdlib:1.8.0")
+    shadow("org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.0")*/
     /*
 
     // Implementations
@@ -123,6 +126,7 @@ tasks.jar {
 }
 val shadowJar = tasks.named<ShadowJar>("shadowJar") {
     archiveClassifier.set("")
+    archiveVersion.set("")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     configurations = listOf(library, shadeKotlin)
 
