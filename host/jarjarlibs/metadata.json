@@ -1,0 +1,28 @@
+{
+  "jars": [
+    {
+      "identifier": {
+        "group": "org.jetbrains.kotlin",
+        "artifact": "kotlin-stdlib"
+      },
+      "version": {
+        "range": "[1.8.10,)",
+        "artifactVersion": "2.1.0-RC"
+      },
+      "path": "META-INF/jarjar/kotlin-stdlib-2.1.0-RC.jar",
+      "isObfuscated": false
+    },
+    {
+      "identifier": {
+        "group": "org.jetbrains.kotlin",
+        "artifact": "kotlin-reflect"
+      },
+      "version": {
+        "range": "[1.8.10,)",
+        "artifactVersion": "2.1.0-RC"
+      },
+      "path": "META-INF/jarjar/kotlin-reflect-2.1.0-RC.jar",
+      "isObfuscated": false
+    }
+  ]
+}

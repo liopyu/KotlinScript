@@ -10,7 +10,7 @@ import kotlin.script.experimental.jvm.dependenciesFromClassloader
 import kotlin.script.experimental.jvm.jvm
 
 @KotlinScript(
-    fileExtension = "plugin.kts",
+    fileExtension = "kts",
     compilationConfiguration = ScriptConfiguration::class
 )
 abstract class PluginScript
@@ -20,7 +20,7 @@ object ScriptConfiguration : ScriptCompilationConfiguration({
     compilerOptions("-jvm-target", "17")
     jvm {
         dependenciesFromClassloader(
-            classLoader = ClassLoader.getSystemClassLoader(),
+            //classLoader = this::class.java.classLoader,
             wholeClasspath = true
         )
     }
