@@ -22,6 +22,7 @@ repositories {
     maven(url = "https://api.modrinth.com/maven")
     maven(url = "https://maven.neoforged.net/releases")
     mavenLocal()
+
 }
 
 dependencies {
@@ -36,9 +37,9 @@ dependencies {
     implementation(project(":common", configuration = "namedElements")) {
         isTransitive = false
     }
-    implementation(libs.neo.kotlin.forge) {
+    /*implementation(libs.neo.kotlin.forge) {
         exclude(group = "net.neoforged.fancymodloader", module = "loader")
-    }
+    }*/
     "developmentNeoForge"(project(":common", configuration = "namedElements")) {
         isTransitive = false
     }
@@ -47,11 +48,19 @@ dependencies {
     }
     testImplementation(project(":common", configuration = "namedElements"))
 
+    include("org.jetbrains.kotlin:kotlin-scripting-jsr223:1.9.10")
+    include("org.jetbrains.kotlin:kotlin-compiler-embeddable:1.9.10")
+    implementation("org.jetbrains.kotlin:kotlin-scripting-jsr223:1.9.10")
+    implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:1.9.10")
+    include(libs.fabric.kotlin)
+
     listOf(
+        "org.jetbrains.kotlin:kotlin-scripting-jsr223:1.9.10",
+        "org.jetbrains.kotlin:kotlin-compiler-embeddable:1.9.10",
         libs.graal
     ).forEach {
-        forgeRuntimeLibrary(it)
         bundle(it)
+        forgeRuntimeLibrary(it)
     }
 }
 
