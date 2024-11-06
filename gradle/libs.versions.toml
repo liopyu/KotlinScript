@@ -1,0 +1,96 @@
+[versions]
+# Kotlin
+kotlin = "2.0.0"
+
+# Plugins
+licenser = "0.6.1"
+shadow = "8.1.1"
+blossom = "2.1.0"
+idea-ext = "1.1.7"
+
+# Loom
+loom = "1.7-SNAPSHOT"
+architectury-plugin = "3.4-SNAPSHOT"
+
+# Common
+
+graal = "22.3.0"
+icu4j = "71.1"
+jei-api = "19.8.2.99"
+
+# Fabric
+fabric-loader = "0.16.5"
+fabric-api = "0.104.0+1.21.1"
+fabric-kotlin = "1.11.0+kotlin.2.0.0"
+fabric-permissions-api = "0.2-SNAPSHOT"
+lambDynamicLights = "3.0.1+1.21.1"
+debugutils-fabric = "1.21-1.0.6-fabric"
+
+# NeoForge
+neoforge = "21.1.66"
+neo-kotlin-for-forge = "5.5.0"
+debugutils-forge = "1.21-1.0.6-neoforge"
+
+# Data Storage
+mongo = "4.10.2"
+
+# Testing
+junit = "5.9.0"
+mockito = "5.2.0"
+mockk = "1.12.1"
+classgraph = "4.8.153"
+
+[libraries]
+# General Buildscript Plugins
+kotlin = { group = "org.jetbrains.kotlin", name = "kotlin-gradle-plugin", version.ref = "kotlin" }
+loom = { group = "dev.architectury", name = "architectury-loom", version.ref = "loom" }
+architectury = { group = "architectury-plugin", name = "architectury-plugin.gradle.plugin", version.ref = "architectury-plugin" }
+shadow = { group = "com.github.johnrengelman", name = "shadow", version.ref = "shadow" }
+blossom = { group = "net.kyori", name = "blossom", version.ref = "blossom" }
+ideaExt = { group = "org.jetbrains.gradle.plugin.idea-ext", name = "org.jetbrains.gradle.plugin.idea-ext.gradle.plugin", version.ref = "idea-ext"}
+licenser = { group = "gradle.plugin.org.cadixdev.gradle", name = "licenser", version.ref = "licenser" }
+
+# Kotlin
+kotlin-stdlib = { group = "org.jetbrains.kotlin", name = "kotlin-stdlib-jdk8", version.ref = "kotlin" }
+kotlin-reflect = { group = "org.jetbrains.kotlin", name = "kotlin-reflect", version.ref = "kotlin" }
+
+# Common
+jei-api = { group = "mezz.jei", name = "jei-1.21-common-api", version.ref = "jei-api"}
+
+graal = { group = "org.graalvm.js", name = "js", version.ref = "graal" }
+icu4j = { group = "com.ibm.icu", name = "icu4j", version.ref = "icu4j" }
+
+# Fabric
+fabric-loader = { group = "net.fabricmc", name = "fabric-loader", version.ref = "fabric-loader" }
+fabric-api = { group = "net.fabricmc.fabric-api", name = "fabric-api", version.ref = "fabric-api" }
+fabric-kotlin = { group = "net.fabricmc", name = "fabric-language-kotlin", version.ref = "fabric-kotlin" }
+fabric-permissions = { group = "me.lucko", name = "fabric-permissions-api", version.ref = "fabric-permissions-api" }
+adorn-fabric = { group = "maven.modrinth", name = "adorn", version = "6.0.0-neoforge"}
+lambDynamicLights = { group = "maven.modrinth", name = "lambdynamiclights", version.ref = "lambDynamicLights"}
+jei-api-fabric = { group = "mezz.jei", name = "jei-1.21-fabric-api", version.ref = "jei-api" }
+jei-fabric = { group = "mezz.jei", name = "jei-1.21-fabric", version.ref = "jei-api"}
+fabric-debugutils = { group = "maven.modrinth", name = "debugutils", version.ref = "debugutils-fabric"}
+
+# NeoForge
+neoforge = { group = "net.neoforged", name = "neoforge", version.ref = "neoforge" }
+neo-kotlin-forge = { group = "thedarkcolour", name = "kotlinforforge-neoforge", version.ref = "neo-kotlin-for-forge" }
+neoforge-debugutils = { group = "maven.modrinth", name = "debugutils", version.ref = "debugutils-forge"}
+
+# Data Storage
+mongo-driver-core = { group = "org.mongodb", name = "mongodb-driver-core", version.ref = "mongo" }
+mongo-driver-sync = { group = "org.mongodb", name = "mongodb-driver-sync", version.ref = "mongo" }
+
+# Testing
+junit-fabric = { group = "net.fabricmc", name = "fabric-loader-junit", version.ref = "fabric-loader" }
+junit-params = { group = "org.junit.jupiter", name = "junit-jupiter-params", version.ref = "junit" }
+mockito-core = { group = "org.mockito", name = "mockito-core", version.ref = "mockito" }
+mock-kotlin = { group = "io.mockk", name = "mockk", version.ref = "mockk" }
+classgraph = { group = "io.github.classgraph", name = "classgraph", version.ref = "classgraph" }
+
+[bundles]
+kotlin = [ "kotlin-stdlib", "kotlin-reflect" ]
+fabric = [ "fabric-kotlin", "fabric-permissions" ]
+fabric-integrations-compileOnly = [ "adorn-fabric", "lambDynamicLights", "jei-api-fabric" ]
+fabric-integrations-runtimeOnly = [ "jei-fabric" ]
+mongo = [ "mongo-driver-core", "mongo-driver-sync" ]
+unitTesting = [ "junit-fabric", "junit-params", "mockito-core", "mock-kotlin", "classgraph" ]

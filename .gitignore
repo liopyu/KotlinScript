@@ -1,0 +1,43 @@
+# eclipse
+bin
+*.launch
+.settings
+.metadata
+.classpath
+.project
+/.architectury-transformer/
+
+# idea
+out
+*.ipr
+*.iws
+*.iml
+.idea
+
+# gradle
+build
+.gradle
+
+# other
+eclipse
+run
+runClient
+runServer
+
+# Files from Forge MDK
+forge*changelog.txt
+/showdown/
+/logs/
+.vscode/launch.json
+.vscode
+fabric/runClient/
+
+# Generated files
+*/generated/resources/*
+/fabric/src/generated/resources/kotlin-common.accesswidener
+/.ignored/
+common/.fabric
+.kotlin/
+fabric/runServer
+# MacOS
+.DS_Store

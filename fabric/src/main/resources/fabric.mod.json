@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "kotlinscript",
+  "version": "${version}",
+  "name": "KotlinScript",
+  "description": "KotlinScript Engine for Minecraft",
+  "authors": [
+    "Liopyu"
+  ],
+
+  "license": "GNU-3",
+
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "net.liopyu.kotlinscript.FabricBootstrap"
+    ],
+    "client": [
+    ]
+  },
+  "mixins": [
+  ],
+  "depends": {
+    "fabricloader": ">=${fabric_loader_version}",
+    "fabric-api": "*",
+    "minecraft": ">=${minecraft_version}",
+    "java": ">=17"
+  }
+
+}

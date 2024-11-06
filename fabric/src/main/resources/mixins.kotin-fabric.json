@@ -1,0 +1,10 @@
+{
+  "required": true,
+  "package": "net.liopyu.kotlinscript.mixin",
+  "compatibilityLevel": "JAVA_8",
+  "minVersion": "0.8",
+  "client": [
+  ],
+  "mixins": [
+  ]
+}
