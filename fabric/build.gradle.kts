@@ -52,10 +52,15 @@ dependencies {
         isTransitive = false
     }
     modRuntimeOnly(libs.bundles.fabric.integrations.runtimeOnly)
-    implementation("org.jetbrains.kotlin:kotlin-scripting-jsr223:2.0.20-Beta2")
+    implementation(kotlin("scripting-jsr223"))
+    implementation(kotlin("compiler-embeddable"))
+    include(kotlin("scripting-jsr223"))
+    include(kotlin("compiler-embeddable"))
     include(libs.fabric.kotlin)
 
     listOf(
+        kotlin("scripting-jsr223"),
+        kotlin("compiler-embeddable"),
         libs.graal
     ).forEach {
         bundle(it)

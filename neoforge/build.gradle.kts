@@ -89,7 +89,7 @@ tasks {
 
 //Stole from architect discord, replaces loom.forge.convertAccessWideners
 tasks.remapJar {
-    atAccessWideners.add("kotlinscript-kotlin.accesswidener")
+    atAccessWideners.add("kotlin-common.accesswidener")
 }
 
 
