@@ -22,7 +22,7 @@ repositories {
     maven(url = "https://api.modrinth.com/maven")
     maven(url = "https://maven.neoforged.net/releases")
     mavenLocal()
-
+    mavenCentral()
 }
 
 dependencies {
@@ -37,9 +37,9 @@ dependencies {
     implementation(project(":common", configuration = "namedElements")) {
         isTransitive = false
     }
-    /*implementation(libs.neo.kotlin.forge) {
+    implementation(libs.neo.kotlin.forge) {
         exclude(group = "net.neoforged.fancymodloader", module = "loader")
-    }*/
+    }
     "developmentNeoForge"(project(":common", configuration = "namedElements")) {
         isTransitive = false
     }
@@ -48,15 +48,48 @@ dependencies {
     }
     testImplementation(project(":common", configuration = "namedElements"))
 
-    include("org.jetbrains.kotlin:kotlin-scripting-jsr223:1.9.10")
-    include("org.jetbrains.kotlin:kotlin-compiler-embeddable:1.9.10")
-    implementation("org.jetbrains.kotlin:kotlin-scripting-jsr223:1.9.10")
-    implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:1.9.10")
-    include(libs.fabric.kotlin)
+    include("org.jetbrains.kotlin:kotlin-scripting-jsr223:2.0.21")
+    include("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.0.21")
+   /* include("org.jetbrains.kotlin:kotlin-reflect:2.0.21")
+    include("org.jetbrains.kotlin:kotlin-stdlib:2.0.21")
+    include("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
+    include("org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.9.0")
+    include("org.jetbrains.kotlinx:kotlinx-serialization-core:1.7.3")
+    include("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    include("org.jetbrains.kotlinx:kotlinx-serialization-cbor-jvm:1.7.3")
+    include("org.jetbrains.kotlinx:atomicfu:0.25.0")
+    include("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
+    include("org.jetbrains.kotlinx:kotlinx-io-core:0.5.4")
+    include("org.jetbrains.kotlinx:kotlinx-io-bytestring:0.5.4")*/
+
+    implementation("org.jetbrains.kotlin:kotlin-scripting-jsr223:2.0.21")
+    implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.0.21")
+   /* implementation("org.jetbrains.kotlin:kotlin-reflect:2.0.21")
+    implementation("org.jetbrains.kotlin:kotlin-stdlib:2.0.21")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.9.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-core:1.7.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-cbor-jvm:1.7.3")
+    implementation("org.jetbrains.kotlinx:atomicfu:0.25.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-io-core:0.5.4")
+    implementation("org.jetbrains.kotlinx:kotlinx-io-bytestring:0.5.4")*/
 
     listOf(
-        "org.jetbrains.kotlin:kotlin-scripting-jsr223:1.9.10",
-        "org.jetbrains.kotlin:kotlin-compiler-embeddable:1.9.10",
+       /* "org.jetbrains.kotlin:kotlin-stdlib:2.0.21",
+        "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0",
+        "org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.9.0",
+        "org.jetbrains.kotlinx:kotlinx-serialization-core:1.7.3",
+        "org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3",
+        "org.jetbrains.kotlinx:kotlinx-serialization-cbor-jvm:1.7.3",
+        "org.jetbrains.kotlinx:atomicfu:0.25.0",
+        "org.jetbrains.kotlinx:kotlinx-datetime:0.6.1",
+        "org.jetbrains.kotlinx:kotlinx-io-core:0.5.4",
+        "org.jetbrains.kotlinx:kotlinx-io-bytestring:0.5.4",
+        "org.jetbrains.kotlin:kotlin-reflect:2.0.21",*/
+        "org.jetbrains.kotlin:kotlin-scripting-jsr223:2.0.21",
+        "org.jetbrains.kotlin:kotlin-compiler-embeddable:2.0.21",
         libs.graal
     ).forEach {
         bundle(it)
@@ -68,7 +101,7 @@ tasks {
     shadowJar {
         exclude("architectury-common.accessWidener")
         exclude("architectury.common.json")
-
+        relocate("net.liopyu.kotlinscript", "your.unique.package.kotlinscript")
         relocate ("com.ibm.icu", "net.liopyu.relocations.ibm.icu")
     }
 

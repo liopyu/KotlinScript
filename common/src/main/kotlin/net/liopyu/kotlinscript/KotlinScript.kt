@@ -7,13 +7,14 @@ import org.apache.logging.log4j.LogManager
 import org.apache.logging.log4j.Logger
 import java.io.*
 import java.nio.charset.StandardCharsets
+import javax.script.ScriptEngine
 import javax.script.ScriptEngineManager
 import javax.script.ScriptException
 
 
 val scriptFiles: MutableList<File> = mutableListOf()
 
-private val engine by lazy {
+val engine by lazy {
     KotlinScriptInit.LOGGER.info("Initializing the Kotlin script engine.")
     val eng = ScriptEngineManager().getEngineByExtension("kts")
     if (eng == null) {
@@ -23,7 +24,18 @@ private val engine by lazy {
     eng
 }
 class KotlinScript {
+    companion object {
+        private var instance: KotlinScript = KotlinScript()
+        @JvmStatic
+        val getInstance: KotlinScript
+            get() {
+                return instance
+            }
+    }
     fun loadScriptsFromFolder(folderPath: String) {
+        if (scriptFiles.isNotEmpty()){
+            scriptFiles.clear()
+        }
         KotlinScriptInit.LOGGER.info("Loading scripts from folder: $folderPath")
         val folder = File(folderPath)
         if (!folder.exists() || !folder.isDirectory) {
@@ -45,10 +57,15 @@ class KotlinScript {
         }
         KotlinScriptInit.LOGGER.info("Total scripts loaded: ${scriptFiles.size}")
     }
+    private fun createNewEngine(): ScriptEngine {
+        KotlinScriptInit.LOGGER.info("Creating a new Kotlin script engine instance.")
+        return ScriptEngineManager().getEngineByExtension("kts") ?: throw IllegalStateException("Kotlin scripting engine not found")
+    }
 
     fun evaluateScripts() {
         KotlinScriptInit.LOGGER.info("Starting script evaluation.")
         scriptFiles.forEach { file ->
+            val engine = createNewEngine() // New engine instance for each script
             try {
                 KotlinScriptInit.LOGGER.info("Reading script file: ${file.name}")
                 val script = file.readText(StandardCharsets.UTF_8)
@@ -64,13 +81,16 @@ class KotlinScript {
     }
 }
 
+
 object KotlinScriptInit {
     val LOGGER: Logger = LogManager.getLogger()
+
     fun main() {
-        val kotlinscript = KotlinScript()
+        val kotlinscript = KotlinScript.getInstance
         kotlinscript.loadScriptsFromFolder("config/scripts")
         kotlinscript.evaluateScripts()
     }
+
 
     fun preInitialize() {
         main()

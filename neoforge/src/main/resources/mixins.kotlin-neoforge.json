@@ -1,5 +1,5 @@
 {
-    "required": true,
+    "required": false,
     "package": "net.liopyu.kotlinscript.mixin",
     "compatibilityLevel": "JAVA_21",
     "minVersion": "0.8",

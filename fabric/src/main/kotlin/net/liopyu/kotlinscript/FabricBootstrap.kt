@@ -6,4 +6,6 @@ class FabricBootstrap : ModInitializer {
     override fun onInitialize() {
         KotlinScriptInit.preInitialize()
     }
+
+
 }

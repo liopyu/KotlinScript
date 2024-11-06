@@ -1,6 +1,6 @@
 
 
-package net.liopyu.kotlinscript
+package net.liopyu.kotlinscript.forge
 
 import net.neoforged.fml.common.Mod
 
