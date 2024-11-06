@@ -52,15 +52,28 @@ dependencies {
         isTransitive = false
     }
     modRuntimeOnly(libs.bundles.fabric.integrations.runtimeOnly)
-    implementation(kotlin("scripting-jsr223"))
-    implementation(kotlin("compiler-embeddable"))
-    include(kotlin("scripting-jsr223"))
-    include(kotlin("compiler-embeddable"))
+   /* include("org.jetbrains.kotlin:kotlin-scripting-jsr223:2.0.21")
+    include("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.0.21")
+    include("org.jetbrains.kotlin:kotlin-script-util:1.8.22")*/
+
+    include("org.jetbrains.kotlin:kotlin-scripting-common:2.0.21")
+    include("org.jetbrains.kotlin:kotlin-scripting-jvm:2.0.21")
+    include("org.jetbrains.kotlin:kotlin-scripting-jvm-host:2.0.21")
+    /*include("org.jetbrains.kotlin:kotlin-scripting-dependencies:2.0.21")
+    include("org.jetbrains.kotlin:kotlin-scripting-dependencies-maven:2.0.21")*/
+
+   /* include(kotlin("scripting-jsr223"))
+    include(kotlin("compiler-embeddable"))*/
     include(libs.fabric.kotlin)
 
     listOf(
+        "org.jetbrains.kotlin:kotlin-scripting-common:2.0.21",
+        "org.jetbrains.kotlin:kotlin-scripting-jvm:2.0.21",
+        "org.jetbrains.kotlin:kotlin-scripting-jvm-host:2.0.21",
+       /* "org.jetbrains.kotlin:kotlin-scripting-dependencies-maven:2.0.21",
+        "org.jetbrains.kotlin:kotlin-scripting-dependencies:2.0.21",
         kotlin("scripting-jsr223"),
-        kotlin("compiler-embeddable"),
+        kotlin("compiler-embeddable"),*/
         libs.graal
     ).forEach {
         bundle(it)
