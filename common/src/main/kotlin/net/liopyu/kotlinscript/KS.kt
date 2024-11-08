@@ -10,7 +10,7 @@ import kotlin.script.experimental.jvmhost.createJvmCompilationConfigurationFromT
 internal data class KS(val script: String) {
 
 
-    private val defaultImports = listOf(
+    val defaultImports = listOf(
         //Kotlin Packages
         "kotlin.reflect.*",
         "kotlin.reflect.jvm.*",

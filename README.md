@@ -21,11 +21,12 @@ println("Hello from KotlinScript!")
 
 ## Dependencies
 
-| Dependency                    | Description                                           |
-|-------------------------------|-------------------------------------------------------|
-| `kotlin-scripting-jsr223`     | Supports Kotlin scripting via JSR223                  |
-| `kotlin-compiler-embeddable`  | Embeds the Kotlin compiler for parsing `.kts` files   |
-| `fabric-language-kotlin`      | Ensures Fabric compatibility for Kotlin code          |
+| Dependency                  | Description                                  |
+|-----------------------------|----------------------------------------------|
+| `kotlin-scripting-common`   | version 2.0.21                               |
+| `kotlin-scripting-jvm`      | version 2.0.21                               |
+| `kotlin-scripting-jvm-host` | version 2.0.21                               |
+| `fabric-language-kotlin`    | Ensures Fabric compatibility for Kotlin code |
 
 ## Compatibility
 

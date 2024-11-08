@@ -63,14 +63,16 @@ dependencies {
     include("org.jetbrains.kotlin:kotlin-scripting-dependencies-maven:2.0.21")*/
 
     implementation(kotlin("script-runtime"))
-    include(kotlin("script-runtime"))
+  /*  include(kotlin("script-runtime"))*/
 
    /* include(kotlin("scripting-jsr223"))
     include(kotlin("compiler-embeddable"))*/
     include(libs.fabric.kotlin)
 
     listOf(
+/*
         kotlin("script-runtime"),
+*/
         "org.jetbrains.kotlin:kotlin-scripting-common:2.0.21",
         "org.jetbrains.kotlin:kotlin-scripting-jvm:2.0.21",
         "org.jetbrains.kotlin:kotlin-scripting-jvm-host:2.0.21",

@@ -5,7 +5,8 @@ fun greet() {
     println("Hello, World!")
 }
 greet()
+Number
 
 fun foo(bar: Any): Unit {
-return net.minecraft.client.Minecraft
+
 }
