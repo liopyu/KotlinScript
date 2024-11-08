@@ -19,8 +19,8 @@ object ScriptConfiguration : ScriptCompilationConfiguration({
     ide.acceptedLocations(ScriptAcceptedLocation.Everywhere)
     compilerOptions("-jvm-target", "17")
     jvm {
-        dependenciesFromClassloader(/*
-            classLoader = this::class.java.classLoader,*/
+        dependenciesFromClassloader(
+            classLoader = this::class.java.classLoader,
             wholeClasspath = true
         )
     }

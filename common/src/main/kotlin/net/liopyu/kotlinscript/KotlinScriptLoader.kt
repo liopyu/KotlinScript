@@ -17,7 +17,7 @@ class KotlinScriptLoader {
             scriptFileDir.mkdirs()
             scriptFileDir.listFiles()?.forEach { file ->
                 LogUtils.getLogger().info("Loading script : ${file.name}...")
-                KS(file.readText()).eval()/*.logResult(file.name)*/
+                KS(file.readText()).eval().logResult(file.name)
             }
         }
 

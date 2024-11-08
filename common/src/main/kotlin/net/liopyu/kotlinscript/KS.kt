@@ -15,8 +15,8 @@ internal data class KS(val script: String) {
         "kotlin.reflect.*",
         "kotlin.reflect.jvm.*",
         "org.apache.logging.log4j.Logger",
-        "net.liopyu.*",
-        "com.mojang.logging.LogUtils"
+        "com.mojang.logging.LogUtils",
+        "net.liopyu.kotlinscript.util.console"
     )
 
     private fun mergeImports(): List<String> {
