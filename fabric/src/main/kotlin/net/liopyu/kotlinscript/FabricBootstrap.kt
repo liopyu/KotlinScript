@@ -6,8 +6,8 @@ import net.liopyu.kotlinscript.util.TypingsDumper
 
 class FabricBootstrap : ModInitializer {
     override fun onInitialize() {
-        TypingsDumper.dumpTypingsToJSONFile("net")
-        //KotlinScriptInit.preInitialize()
+        //TypingsDumper.dumpTypingsToJSONFile("net")
+        KotlinScriptInit.preInitialize()
 
     }
 

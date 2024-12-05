@@ -10,16 +10,22 @@ import kotlin.script.experimental.api.onSuccess
 class KotlinScriptLoader {
 
     companion object{
+
         private val DIR = "config/scripts/"
         private val scriptFileDir = File(DIR)
         @JvmStatic
         fun loadScripts() {
             scriptFileDir.mkdirs()
             scriptFileDir.listFiles()?.forEach { file ->
-                LogUtils.getLogger().info("Loading script : ${file.name}...")
-                KS(file.readText()).eval().logResult(file.name)
+                if (file.extension == "kts") {
+                    LogUtils.getLogger().info("Loading script : ${file.name}...")
+                    KS(file.readText()).eval().logResult(file.name)
+                } else {
+                    LogUtils.getLogger().info("Skipped non-script file: ${file.name}")
+                }
             }
         }
+
 
         private fun ResultWithDiagnostics<EvaluationResult>.logResult(name: String) {
             onFailure {
