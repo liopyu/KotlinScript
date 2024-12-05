@@ -1,9 +1,6 @@
 package net.liopyu.kotlinscript
-
-import com.google.gson.JsonPrimitive
 import java.io.File
 import java.net.URL
-import java.net.URLClassLoader
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.util.jar.JarFile
@@ -68,21 +65,30 @@ internal data class KS(val script: String) {
             }
         }
 
-        // filter out inaccessible or problematic classes
         return classes.filter { className ->
             try {
-                // load the class without triggering static initializers
-                val clazz = classLoader.loadClass(className)
+                val clazz = Class.forName(className, false, classLoader)
 
-                // check if the class is public
-                java.lang.reflect.Modifier.isPublic(clazz.modifiers)
+                if (!java.lang.reflect.Modifier.isPublic(clazz.modifiers)) return@filter false
+
+                val resourcePath = className.replace(".", "/") + ".class"
+                val resource = classLoader.getResource(resourcePath)
+                resource != null && isImportableInKts(className)
             } catch (e: Throwable) {
-                false // skip any problematic classes
+                false
             }
         }
     }
 
-
+    // Test if the class is importable in a KTS script
+    fun isImportableInKts(className: String): Boolean {
+        return try {
+            val clazz = Class.forName(className)
+            clazz.declaredMethods.isNotEmpty() || clazz.declaredFields.isNotEmpty()
+        } catch (e: Throwable) {
+            false
+        }
+    }
 
     private val configuration = createJvmCompilationConfigurationFromTemplate<PluginScript> {
         compilerOptions("-jvm-target", "17")
@@ -95,27 +101,22 @@ internal data class KS(val script: String) {
     }
 
     fun writeClassesToFile(classes: List<String>, relativePath: String) {
-        // locate the current working directory
         val workingDir = File(System.getProperty("user.dir"))
         println("current working directory: ${workingDir.absolutePath}")
 
-        // create the target directory path
         val targetDirectory = File(workingDir, relativePath)
 
-        // ensure the target directory exists
         if (!targetDirectory.exists()) {
             targetDirectory.mkdirs()
             println("created directory: ${targetDirectory.absolutePath}")
         }
 
-        // write the json file to the target directory
         val jsonContent = classes.joinToString(
             prefix = "[", postfix = "]", separator = ",\n"
         ) { "\"$it\"" }
         val targetFile = File(targetDirectory, "available_classes.json")
         targetFile.writeText(jsonContent)
 
-        // log the final file path
         println("writing to: ${targetFile.absolutePath}")
     }
 
