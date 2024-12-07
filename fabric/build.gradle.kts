@@ -61,6 +61,7 @@ dependencies {
     include("org.jetbrains.kotlin:kotlin-scripting-jvm-host:2.0.21")
    /* include("org.jetbrains.kotlin:kotlin-scripting-dependencies:2.0.21")
     include("org.jetbrains.kotlin:kotlin-scripting-dependencies-maven:2.0.21")*/
+    implementation("org.jetbrains.kotlinx:kotlinx-metadata-jvm:0.5.0")
 
     implementation(kotlin("script-runtime"))
   /*  include(kotlin("script-runtime"))*/

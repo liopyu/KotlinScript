@@ -1,32 +1,69 @@
-
-// List of test class names to check for existence
-val classNames = listOf(
-    "jdk.internal.org.objectweb.asm.tree.ModuleNode",
-    "net.fabricmc.loader.impl.lib.mappingio.tree.MappingTree",
-    "kotlin.reflect.full.KCallables"
-)
-
-// Function to test if a class exists
-fun testClassExistence(className: String): Boolean {
-    return try {
-        // Attempt to load the class without initializing it
-        val clazz = Class.forName(className)
-
-        // Check if the class is public
-        java.lang.reflect.Modifier.isPublic(clazz.modifiers).also {
-            if (it) {
-                println("Class is public and available: $className")
-            } else {
-                println("Class is not public: $className")
-            }
-        }
-    } catch (e: Throwable) {
-        println("Class not found or inaccessible: $className")
-        false
-    }
-}
-
-// Test each class in the list
-classNames.forEach { className ->
-    testClassExistence(className)
-}
+assert()
+arrayOf()
+arrayListOf<>()
+arrayOfNulls<>()
+uintArrayOf()
+buildMap<>()
+byteArrayOf()
+booleanArrayOf()
+buildList<>()
+buildSet<>()
+buildString()
+compareBy<>()
+charArrayOf()
+charset()
+check()
+checkNotNull()
+compareByDescending<>()
+compareValues()
+compareValuesBy()
+doubleArrayOf()
+error()
+equals()
+emptyList<>()
+emptyArray<>()
+emptyMap<>()
+emptySequence<>()
+emptySet<>()
+enumValueOf<>()
+enumValues<>()
+floatArrayOf()
+generateSequence()
+hashSetOf<>()
+hashCode()
+hashMapOf<Int,String>()
+intArrayOf()
+iterator<Int> {  }
+listOf()
+SlidingWindowKt.checkWindowSizeStep
+kotlin.doubleToUInt
+UArraySortingKt.sortArray
+AbstractMap.access
+ListBuilderKt.arrayOfUninitializedElements
+AbstractList.checkBoundsIndexes
+AbstractMap.entryEquals
+AbstractList.orderedHashCode$kotlin_stdlib
+kotlin.createFailure
+kotlin.uintRemainder
+kotlin.TODO()
+linkedMapOf()
+linkedSetOf()
+listOfNotNull()
+longArrayOf()
+kotlin.ulongDivide()
+kotlin.ulongDivide-eb3DHEI(long, long)
+kotlin.uintCompare(int, int)
+mapOf()
+mutableMapOf<>()
+mutableListOf()
+mutableSetOf()
+nullsLast<>()
+nullsFirst<>()
+naturalOrder<>()
+println()
+print()
+readln()
+run {  }
+runCatching {  }
+TODO()
+kotlin.emptyArray()

@@ -1,6 +1,7 @@
 
 package net.liopyu.kotlinscript
 
+import com.mojang.logging.LogUtils
 import net.fabricmc.api.ModInitializer
 import java.io.File
 import java.net.URL
@@ -10,24 +11,23 @@ import java.util.jar.JarFile
 
 class FabricBootstrap : ModInitializer {
     override fun onInitialize() {
-        //TypingsDumper.dumpTypingsToJSONFile("net")
         KotlinScriptInit.preInitialize()
-        val availableClasses = listAvailableClasses()
-        writeClassesToFile(availableClasses, "config/scripts")
-    }
-    fun writeClassesToFile(classes: List<String>, relativePath: String) {
-        val workingDir = File(System.getProperty("user.dir"))
-        val targetDirectory = File(workingDir, relativePath)
-        if (!targetDirectory.exists()) {
-            targetDirectory.mkdirs()
+        val suggestions = listKotlinDotSuggestions()
+
+        suggestions.forEach { suggestion ->
+            LogUtils.getLogger().info("Testing method: $suggestion")
         }
-        val jsonContent = classes.joinToString(
-            prefix = "[", postfix = "]", separator = ",\n"
-        ) { "\"$it\"" }
-        val targetFile = File(targetDirectory, "available_classes.json")
-        targetFile.writeText(jsonContent)
+        val validAndRelevantSuggestions = KotlinScriptInit.testKotlinSuggestions(suggestions)
+
+        validAndRelevantSuggestions.forEach { suggestion ->
+            LogUtils.getLogger().info("Valid or relevant: $suggestion")
+        }
     }
-    fun listAvailableClasses(): List<String> {
+    val allowedPackages = mapOf(
+        "kotlin." to { className: String -> className.startsWith("kotlin.") && !className.substringAfter("kotlin.").contains(".") },
+        "kotlin.collections." to { className: String -> className.startsWith("kotlin.collections.") }
+    )
+    fun listKotlinDotSuggestions(): List<String> {
         val classLoader = ClassLoader.getSystemClassLoader()
         val urls = mutableListOf<URL>()
 
@@ -38,7 +38,8 @@ class FabricBootstrap : ModInitializer {
             urls.addAll(classPath.split(File.pathSeparator).map { File(it).toURI().toURL() })
         }
 
-        val classes = mutableListOf<String>()
+        val suggestions = mutableListOf<String>()
+
         for (url in urls) {
             val file = File(url.toURI())
             if (file.isDirectory) {
@@ -49,7 +50,13 @@ class FabricBootstrap : ModInitializer {
                             .path
                             .replace(File.separator, ".")
                             .removeSuffix(".class")
-                        classes.add(className)
+
+                        // Check against allowed packages and their logic
+                        allowedPackages.forEach { (packagePrefix, filterLogic) ->
+                            if (filterLogic(className)) {
+                                suggestions.addAll(getKotlinDotSuggestionsFromClass(className, packagePrefix))
+                            }
+                        }
                     }
                 }
             } else if (file.isFile && file.extension == "jar") {
@@ -58,34 +65,61 @@ class FabricBootstrap : ModInitializer {
                         .filter { it.name.endsWith(".class") }
                         .forEach { entry ->
                             val className = entry.name.replace("/", ".").removeSuffix(".class")
-                            classes.add(className)
+
+                            // Check against allowed packages and their logic
+                            allowedPackages.forEach { (packagePrefix, filterLogic) ->
+                                if (filterLogic(className)) {
+                                    suggestions.addAll(getKotlinDotSuggestionsFromClass(className, packagePrefix))
+                                }
+                            }
                         }
                 }
             }
         }
 
-        return classes.filter { className ->
-            try {
-                val clazz = Class.forName(className, false, classLoader)
-
-                if (!java.lang.reflect.Modifier.isPublic(clazz.modifiers)) return@filter false
-
-                val resourcePath = className.replace(".", "/") + ".class"
-                val resource = classLoader.getResource(resourcePath)
-                resource != null && isImportableInKts(className)
-            } catch (e: Throwable) {
-                false
+        return suggestions.distinct().sorted()
+    }
+    fun getKotlinDotSuggestionsFromClass(className: String, allowedPackage: String): List<String> {
+        try {
+            // Filter logic moved here for clarity
+            if (!className.startsWith(allowedPackage) || className.substringAfter(allowedPackage).contains(".")) {
+                return emptyList()
             }
+
+            val clazz = Class.forName(className, false, ClassLoader.getSystemClassLoader())
+            if (!java.lang.reflect.Modifier.isPublic(clazz.modifiers)) {
+                return emptyList()
+            }
+
+            val suggestions = mutableListOf<String>()
+
+            clazz.declaredMethods.filter { method ->
+                java.lang.reflect.Modifier.isPublic(method.modifiers) && java.lang.reflect.Modifier.isStatic(method.modifiers)
+            }.forEach { method ->
+                val sanitizedMethodName = method.name.substringBefore("-").substringBefore('$')
+                if (allowedPackage == "kotlin.") {
+                    suggestions.add("kotlin.$sanitizedMethodName")
+                } else {
+                    // For non-base kotlin packages, use only the simple name of the method
+                    suggestions.add("${className.substringAfterLast('.')}.$sanitizedMethodName")
+                }
+            }
+
+            // Companion object handling
+            clazz.declaredClasses.firstOrNull { it.simpleName == "Companion" }?.let { companion ->
+                companion.declaredMethods.filter { method ->
+                    java.lang.reflect.Modifier.isPublic(method.modifiers)
+                }.forEach { method ->
+                    val sanitizedMethodName = method.name.substringBefore("-").substringBefore('$')
+                    suggestions.add("${clazz.simpleName}.$sanitizedMethodName")
+                }
+            }
+
+            return suggestions.distinct()
+        } catch (e: Throwable) {
+            return emptyList()
         }
     }
 
-    // Test if the class is importable in a KTS script
-    fun isImportableInKts(className: String): Boolean {
-        return try {
-            val clazz = Class.forName(className)
-            clazz.declaredMethods.isNotEmpty() || clazz.declaredFields.isNotEmpty()
-        } catch (e: Throwable) {
-            false
-        }
-    }
+
 }

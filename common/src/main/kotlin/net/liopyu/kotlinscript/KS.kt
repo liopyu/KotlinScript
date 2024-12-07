@@ -35,6 +35,7 @@ data class KS(val script: String) {
         }
     }
 
+
     fun eval(): ResultWithDiagnostics<EvaluationResult> {
         val result = BasicJvmScriptingHost().eval(compile(), configuration, null)
         return result
