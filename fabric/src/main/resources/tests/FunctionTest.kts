@@ -1,3 +1,27 @@
+arrayListOf()
+setOf()
+List<String>(1,)
+UInt.hashCode
+ArrayList
+RandomAccess
+ByteIterator
+Pair
+Result.success()
+DeprecationLevel
+AbstractList.checkBoundsIndexes()
+kotlin.ulongToString
+AbstractMutableSet()
+arrayListOf()
+arrayOfNulls<>()
+
+toString()
+
+
+
+var a = [].withIndex()
+listOf()
+asSequence
+hashSetOf<String>()
 assert()
 arrayOf()
 arrayListOf<>()
@@ -8,6 +32,10 @@ byteArrayOf()
 booleanArrayOf()
 buildList<>()
 buildSet<>()
+_Assertions
+iterator
+DeprecationLevel()
+to
 buildString()
 compareBy<>()
 charArrayOf()
@@ -66,4 +94,16 @@ readln()
 run {  }
 runCatching {  }
 TODO()
+AbstractList
+
 kotlin.emptyArray()
+kotlin.emptyArray
+kotlin.Exception
+AbstractSet.setEquals
+
+IllegalStateException
+IllegalStateException
+ArithmeticException
+OverloadResolutionByLambdaReturnType
+emptyArray
+AbstractMutableSet

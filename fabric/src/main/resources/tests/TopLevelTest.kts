@@ -15,7 +15,7 @@ for (i in iterable) {
 
 }
 
-
+arrayListOf()
 
 // If expression at the top level
 val status = if (isTrue) "Active" else "Inactive"
