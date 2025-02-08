@@ -1,3 +1,26 @@
+
+import java.io.File
+import kotlin.math.abs
+import kotlin.system.measureNanoTime
+apply {}
+takeUnless {}
+to {}
+
+kotlin.sequences.filterNotNull
+File("").walkBottomUp()
+walkBottomUp
+kotlin.text.isLowerCase
+throwCountOverflow()
+terminateCollectionToArray
+Grouping
+iterator()
+abs()
+kotlin.comparisons.compareBy
+kotlin.sequences.groupingBy()
+kotlin.time.saturatingAdd()
+kotlin.time.saturatingAdd
+kotlin.io.path.insecureEnterDirectory
+measureNanoTime()
 arrayListOf()
 setOf()
 List<String>(1,)
@@ -11,16 +34,23 @@ DeprecationLevel
 AbstractList.checkBoundsIndexes()
 kotlin.ulongToString
 AbstractMutableSet()
+readln
 arrayListOf()
 arrayOfNulls<>()
-
+kotlin.coroutines.minusPolymorphicKey
 toString()
-
-
-
+kotlin.io.readln
+emptyArray<>()
+arrayOf()
+printWriter()
+10.toBigInteger()
+synchronized
+assert
+kotlin.collections.mapOf<String,String>()
+ulongDivide
 var a = [].withIndex()
 listOf()
-asSequence
+kotlin.Result.equals()
 hashSetOf<String>()
 assert()
 arrayOf()
@@ -91,6 +121,7 @@ naturalOrder<>()
 println()
 print()
 readln()
+kotlin.assert()
 run {  }
 runCatching {  }
 TODO()
@@ -107,3 +138,23 @@ ArithmeticException
 OverloadResolutionByLambdaReturnType
 emptyArray
 AbstractMutableSet
+with()
+
+fun main() {
+    // Create a sequence containing nullable integers
+    val numbers: Sequence<Int?> = sequenceOf(1, null, 2, 3, null, 4, 5, null)
+
+    // Use the filterNotNull extension to remove nulls from the sequence
+    val nonNullNumbers: Sequence<Int> = numbers.filterNotNull()
+
+    // Print each non-null number
+    nonNullNumbers.forEach { println(it) }
+}
+to {}
+val result = 1 apply 1
+fun main() {
+    val value = 64
+    // Use infix notation to shift 'value' right by 2 bits.
+    val result = value shr 2
+    println("Result of 64 shr 2: $result")
+}

@@ -1,11 +1,3 @@
-import java.time.OffsetDateTime
-import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
-import utilities.isSnapshot
-import utilities.version
-
-
-
 plugins {
     id("kotlinscript.base")
     id("kotlinscript.publish")
@@ -42,6 +34,7 @@ dependencies {
     implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.0.21")
     implementation("org.jetbrains.kotlin:kotlin-script-util:1.8.22")*/
 
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.1")
     implementation("org.jetbrains.kotlin:kotlin-scripting-common:2.0.21")
     implementation("org.jetbrains.kotlin:kotlin-scripting-jvm:2.0.21")
     implementation("org.jetbrains.kotlin:kotlin-scripting-jvm-host:2.0.21")

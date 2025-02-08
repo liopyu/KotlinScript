@@ -55,6 +55,7 @@ dependencies {
    /* include("org.jetbrains.kotlin:kotlin-scripting-jsr223:2.0.21")
     include("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.0.21")
     include("org.jetbrains.kotlin:kotlin-script-util:1.8.22")*/
+    implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.0.21")
 
     include("org.jetbrains.kotlin:kotlin-scripting-common:2.0.21")
     include("org.jetbrains.kotlin:kotlin-scripting-jvm:2.0.21")
@@ -62,6 +63,7 @@ dependencies {
    /* include("org.jetbrains.kotlin:kotlin-scripting-dependencies:2.0.21")
     include("org.jetbrains.kotlin:kotlin-scripting-dependencies-maven:2.0.21")*/
     implementation("org.jetbrains.kotlinx:kotlinx-metadata-jvm:0.5.0")
+    implementation("io.github.classgraph:classgraph:4.8.149")
 
     implementation(kotlin("script-runtime"))
   /*  include(kotlin("script-runtime"))*/
