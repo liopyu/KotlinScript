@@ -1,5 +1,6 @@
 
 
+
 package net.liopyu.kotlinscript
 
 import kotlinx.coroutines.Dispatchers
@@ -10,6 +11,7 @@ import net.liopyu.kotlinscript.util.KotlinObject
 import org.apache.logging.log4j.LogManager
 import org.apache.logging.log4j.Logger
 import kotlin.script.experimental.api.ResultWithDiagnostics
+
 
 object KotlinScriptInit {
     val logger: Logger = LogManager.getLogger()

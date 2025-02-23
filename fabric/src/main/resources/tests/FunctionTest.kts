@@ -1,160 +1,166 @@
-
-import java.io.File
+import kotlin.*
+import kotlin.math.IEEErem
 import kotlin.math.abs
-import kotlin.system.measureNanoTime
-apply {}
-takeUnless {}
-to {}
+import kotlin.time.saturatingAdd
+saturatingAdd()
+fun functionName(paramName: String): Unit {
 
-kotlin.sequences.filterNotNull
-File("").walkBottomUp()
-walkBottomUp
-kotlin.text.isLowerCase
-throwCountOverflow()
-terminateCollectionToArray
-Grouping
-iterator()
+}
 abs()
-kotlin.comparisons.compareBy
-kotlin.sequences.groupingBy()
-kotlin.time.saturatingAdd()
-kotlin.time.saturatingAdd
-kotlin.io.path.insecureEnterDirectory
-measureNanoTime()
-arrayListOf()
-setOf()
-List<String>(1,)
-UInt.hashCode
-ArrayList
-RandomAccess
-ByteIterator
-Pair
-Result.success()
-DeprecationLevel
-AbstractList.checkBoundsIndexes()
-kotlin.ulongToString
-AbstractMutableSet()
-readln
-arrayListOf()
-arrayOfNulls<>()
-kotlin.coroutines.minusPolymorphicKey
-toString()
-kotlin.io.readln
-emptyArray<>()
-arrayOf()
-printWriter()
-10.toBigInteger()
-synchronized
-assert
-kotlin.collections.mapOf<String,String>()
-ulongDivide
-var a = [].withIndex()
-listOf()
-kotlin.Result.equals()
-hashSetOf<String>()
-assert()
-arrayOf()
-arrayListOf<>()
-arrayOfNulls<>()
-uintArrayOf()
-buildMap<>()
-byteArrayOf()
-booleanArrayOf()
-buildList<>()
-buildSet<>()
-_Assertions
-iterator
-DeprecationLevel()
-to
-buildString()
-compareBy<>()
-charArrayOf()
-charset()
-check()
-checkNotNull()
-compareByDescending<>()
-compareValues()
-compareValuesBy()
-doubleArrayOf()
-error()
-equals()
-emptyList<>()
-emptyArray<>()
-emptyMap<>()
-emptySequence<>()
-emptySet<>()
-enumValueOf<>()
-enumValues<>()
-floatArrayOf()
-generateSequence()
-hashSetOf<>()
-hashCode()
-hashMapOf<Int,String>()
-intArrayOf()
-iterator<Int> {  }
-listOf()
-SlidingWindowKt.checkWindowSizeStep
-kotlin.doubleToUInt
-UArraySortingKt.sortArray
-AbstractMap.access
-ListBuilderKt.arrayOfUninitializedElements
-AbstractList.checkBoundsIndexes
-AbstractMap.entryEquals
-AbstractList.orderedHashCode$kotlin_stdlib
-kotlin.createFailure
-kotlin.uintRemainder
-kotlin.TODO()
-linkedMapOf()
-linkedSetOf()
-listOfNotNull()
-longArrayOf()
-kotlin.ulongDivide()
-kotlin.ulongDivide-eb3DHEI(long, long)
-kotlin.uintCompare(int, int)
-mapOf()
-mutableMapOf<>()
-mutableListOf()
-mutableSetOf()
-nullsLast<>()
-nullsFirst<>()
-naturalOrder<>()
-println()
-print()
-readln()
-kotlin.assert()
-run {  }
-runCatching {  }
-TODO()
-AbstractList
-
-kotlin.emptyArray()
-kotlin.emptyArray
-kotlin.Exception
-AbstractSet.setEquals
-
-IllegalStateException
-IllegalStateException
-ArithmeticException
-OverloadResolutionByLambdaReturnType
-emptyArray
-AbstractMutableSet
-with()
-
-fun main() {
-    // Create a sequence containing nullable integers
-    val numbers: Sequence<Int?> = sequenceOf(1, null, 2, 3, null, 4, 5, null)
-
-    // Use the filterNotNull extension to remove nulls from the sequence
-    val nonNullNumbers: Sequence<Int> = numbers.filterNotNull()
-
-    // Print each non-null number
-    nonNullNumbers.forEach { println(it) }
+fun Unit.functionName(param: String): Unit {
+    { println("Hello, World!") }()
 }
-to {}
-val result = 1 apply 1
-fun main() {
-    val value = 64
-    // Use infix notation to shift 'value' right by 2 bits.
-    val result = value shr 2
-    println("Result of 64 shr 2: $result")
+fun functionName() {
+
 }
+val a= 1
+a
+
+{
+
+}
+b()
+fun Unit.functionName(param: String):  {
+    fun Unit.functionName(param: String): Unit {
+
+    }
+}
+fun functionName() =
+fun functionName(action: (String) -> Unit) {
+
+}
+// TODO #105
+/**
+ *
+ */
+class ClassName {
+
+}
+fun print() {
+
+}
+
+var pokemon: Pokemon = pokemon
+    set(value) {
+        value.isClient = this.level().isClientSide
+        field = println()
+        delegate.changePokemon(value)
+
+        //This used to be referring to this.updateEyeHeight, I think this is the best conversion
+        // We need to update this value every time the Pokémon changes, other eye height related things will be dynamic.
+        this.refreshDimensions()
+    }
+1.0.IEEErem
+kotlin.math.abs()
+fun functionName(param: String: Unit {
+
+}
+Char()
+kotlin.ranges.CharRange
+fun functionName(): Float{
+    return (1,1)
+}
+val valName: Unit = initialValue
+fun functionname() 1
+data class ClassName(val param1: Unit, val param2: Unit)
+object ObjectName {
+
+}
+val bitwiseOr = 0b1010 or 0b0101
+val bitwiseAnd = 0b1010 and 0b0101
+var varName: Unit = initialValue{
+    var varName: Unit = initialValue
+}
+val any: Double = 1.0
+/**
+ * A utility method to instance a [Pokemon] aware if the [world] is client sided or not.
+ *
+ * @return The side safe [Pokemon] with the [Pokemon.isClient] set.
+ */
+interface InterfaceName {
+
+}
+abstract class ClassName {
+    abstract fun functionName()
+    companion object {
+        fun functionName(param: String): Unit {
+
+        }
+    }
+
+}
+
+sealed class ClassName {
+    companion object {
+
+    }
+    
+}
+
+val lambdaName: (String) -> Unit = { param ->  }
+fun main(args: Array<String>?) {
+
+}
+try {
+
+} catch (e: Exception) {
+    e.printStackTrace()
+}
+if (true) {
+
+} else {
+
+}
+for (i in mutableListOf("")) {
+
+}
+while (true) {
+
+}
+do {
+
+} while (true)
+when (true) {
+    true -> 1
+    true -> 1
+    else -> 1
+}
+suspend fun functionName(param: String): Unit {
+
+}
+val propertyName by lazy {
+
+}
+inline fun functionName(crossinline action: () -> Unit) {
+
+}
+object SingletonName {
+    init {  }
+}
+class ClassName private constructor() {
+    companion object {
+        fun create(): ClassName {
+            return ClassName()
+        }
+    }
+}
+val valName: Unit = Unit
+var varName: Unit = Unit
+val listName: MutableList<Unit> = mutableListOf()
+val listName: List<Unit> = listOf()
+val mapName: Map<String, Unit> = mapOf()
+val mapName: MutableMap<String, Unit> = mutableMapOf()
+lateinit var propertyName: Unit
+
+val instance = object : InterfaceName {
+
+}
+inline fun <reified T> functionName(): Unit {
+
+}
+var propertyName: Unit = Unit
+    get() = field
+    set(value) {
+        field = value
+
+    }

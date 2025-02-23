@@ -201,6 +201,7 @@ open class PokemonEntity(
             value.isClient = this.level().isClientSide
             field = value
             delegate.changePokemon(value)
+            delegate
 
             //This used to be referring to this.updateEyeHeight, I think this is the best conversion
             // We need to update this value every time the Pokémon changes, other eye height related things will be dynamic.

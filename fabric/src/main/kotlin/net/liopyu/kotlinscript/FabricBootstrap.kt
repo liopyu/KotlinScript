@@ -52,6 +52,11 @@ class FabricBootstrap : ModInitializer {
         val environment = KotlinCoreEnvironment.createForProduction(disposable, configuration, EnvironmentConfigFiles.JVM_CONFIG_FILES)
         val ktFiles: List<KtFile> = environment.getSourceFiles()
         val functions = mutableListOf<KotlinObject>()
+
+        val kotlinCorePackages = setOf(
+            "kotlin", "kotlin.io", "kotlin.text", "kotlin.collections", "kotlin.ranges", "kotlin.sequences", "kotlin.comparisons"
+        )
+
         for (file in ktFiles) {
             val pkg = file.packageFqName.asString()
             val sourceName = file.name.substringBeforeLast(".")
@@ -80,6 +85,10 @@ class FabricBootstrap : ModInitializer {
                             else ->
                                 "property"
                         }
+
+                        // Determine if the function requires an import
+                        val requiresImport = pkg.isNotEmpty() && pkg !in kotlinCorePackages
+
                         functions.add(
                             KotlinObject(
                                 fullyQualifiedName = fqName,
@@ -87,7 +96,8 @@ class FabricBootstrap : ModInitializer {
                                 source = sourceName,
                                 type = type,
                                 path = pkg,
-                                parentType = receiverType
+                                parentType = receiverType,
+                                requiresImport = requiresImport
                             )
                         )
                     }
@@ -96,6 +106,7 @@ class FabricBootstrap : ModInitializer {
         Disposer.dispose(disposable)
         return functions
     }
+
 
     fun saveSuggestionsToJson(entities: List<KotlinObject>, outputPath: String) {
         val gson = GsonBuilder().setPrettyPrinting().create()
