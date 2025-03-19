@@ -2,11 +2,8 @@ package net.liopyu.kotlinscript
 
 import com.mojang.logging.LogUtils
 import java.io.File
-import kotlin.script.experimental.api.EvaluationResult
-import kotlin.script.experimental.api.ResultWithDiagnostics
-import kotlin.script.experimental.api.asSuccess
-import kotlin.script.experimental.api.onFailure
-import kotlin.script.experimental.api.onSuccess
+import kotlin.script.experimental.api.*
+
 class KotlinScriptLoader {
 
     companion object{
@@ -16,15 +13,17 @@ class KotlinScriptLoader {
         @JvmStatic
         fun loadScripts() {
             scriptFileDir.mkdirs()
-            scriptFileDir.listFiles()?.forEach { file ->
-                if (file.extension == "kts") {
-                    LogUtils.getLogger().info("Loading script : ${file.name}...")
-                    KS(file.readText()).eval().logResult(file.name)
-                } else {
-                    LogUtils.getLogger().info("Skipped non-script file: ${file.name}")
+            scriptFileDir.walkTopDown().forEach { file ->
+                if (file.isFile && file.extension == "kts") {
+                    LogUtils.getLogger().info("Loading script: ${file.relativeTo(scriptFileDir)}...")
+                    val scriptContent = file.readText()
+                    KS(scriptContent).eval().logResult(file.name)
+                } else if (file.isDirectory) {
+                    LogUtils.getLogger().info("Scanning directory: ${file.relativeTo(scriptFileDir)}")
                 }
             }
         }
+
 
 
         private fun ResultWithDiagnostics<EvaluationResult>.logResult(name: String) {

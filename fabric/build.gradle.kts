@@ -47,6 +47,8 @@ dependencies {
     modImplementation(libs.fabric.loader)
     modApi(libs.fabric.api)
     modApi(libs.bundles.fabric)
+    implementation("net.fabricmc:fabric-fernflower:2.0.0")
+
 
     modCompileOnly(libs.bundles.fabric.integrations.compileOnly) {
         isTransitive = false

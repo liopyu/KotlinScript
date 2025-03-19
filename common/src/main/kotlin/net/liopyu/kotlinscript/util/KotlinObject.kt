@@ -6,6 +6,7 @@ data class KotlinObject(
     val type: String,
     val path: String,
     val parentType: String? = null,
-    val requiresImport: Boolean
+    val requiresImport: Boolean,
+    val isClass:Boolean
 )
 
