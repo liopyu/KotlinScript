@@ -10,8 +10,10 @@ import kotlinx.coroutines.runBlocking
 import net.liopyu.kotlinscript.util.KotlinObject
 import org.apache.logging.log4j.LogManager
 import org.apache.logging.log4j.Logger
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 import kotlin.script.experimental.api.ResultWithDiagnostics
-
 
 object KotlinScriptInit {
     val logger: Logger = LogManager.getLogger()
@@ -32,6 +34,47 @@ object KotlinScriptInit {
                 }
             }
         }.awaitAll().filterNotNull()
+    }
+    private val importCache = ConcurrentHashMap<String, Boolean>()
+    private val executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors())
+
+    fun isValidImport(suggestion: String?, type: String): CompletableFuture<Boolean> {
+        if (suggestion.isNullOrBlank()) return CompletableFuture.completedFuture(false)
+
+        // Cache lookup to skip redundant checks
+        importCache[suggestion]?.let { return CompletableFuture.completedFuture(it) }
+
+        // Early filtering for known invalid patterns
+        if (/*suggestion.startsWith("javafx.") ||
+            suggestion.startsWith("com.sun.") ||*/
+            suggestion.contains("package-info")) {
+            importCache[suggestion] = false
+            return CompletableFuture.completedFuture(false)
+        }
+
+        val suggestionToEval = "import $suggestion"
+
+        // Async evaluation with caching
+        return CompletableFuture.supplyAsync({
+            try {
+                val ks = KS(suggestionToEval)
+                val result = ks.eval()
+
+                val isValid = when (result) {
+                    is ResultWithDiagnostics.Success -> true
+                    is ResultWithDiagnostics.Failure -> {
+                        !result.reports.any { it.message.contains("Unresolved reference") }
+                    }
+                    else -> false
+                }
+
+                importCache[suggestion] = isValid
+                isValid
+            } catch (e: Exception) {
+                importCache[suggestion] = false
+                false
+            }
+        }, executor)
     }
 
     private fun isValidSuggestion(suggestion: String?, type: String): Boolean {

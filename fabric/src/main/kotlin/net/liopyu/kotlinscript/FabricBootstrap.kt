@@ -26,14 +26,16 @@ import java.io.File
 import java.io.PrintWriter
 import java.lang.reflect.Modifier
 import java.nio.file.Files
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.system.measureTimeMillis
 
 class FabricBootstrap : ModInitializer {
     override fun onInitialize() {
         KotlinScriptInit.preInitialize()
         val instanceDir = File(System.getProperty("user.dir"))
-        val modsDir = File(instanceDir,"mods")
         val sourcesDir = File(instanceDir, "kotlinsources")
+        val modsDir = File(instanceDir,"mods")
         if (!sourcesDir.exists() || !sourcesDir.isDirectory) {
             LogUtils.getLogger().warn("Kotlin sources folder not found at ${sourcesDir.absolutePath}")
             return
@@ -52,8 +54,9 @@ class FabricBootstrap : ModInitializer {
             obj.copy(simpleName = newSimpleName)
         }
         saveSuggestionsToJson(enrichedSuggestions, "kotlin_suggestions.json")
-        dumpClassesToFile(sourcesDir)
-       // dumpClassesWithFernFlower(sourcesDir)
+       dumpClassesToFile(sourcesDir)
+        //inspectClassDetails("org.jetbrains.kotlin.codegen.CommonVariableAsmNameManglingUtils")
+       //dumpClassesWithFernFlower(sourcesDir)
     }
 
 
@@ -243,8 +246,237 @@ class FabricBootstrap : ModInitializer {
     """.trimIndent()
     }
 
+    fun inspectClassDetails(name: String) {
+        val classInfo = ClassGraph()
+            .enableClassInfo()
+            .enableMethodInfo()
+            .enableFieldInfo()
+            .enableAnnotationInfo()
+            .enableExternalClasses()
+            .enableSystemJarsAndModules()
+            .scan()
+            .allClasses
+            .firstOrNull { it.name == name }
 
+        if (classInfo != null) {
+            LogUtils.getLogger().info("Class Details for ${classInfo.name}")
+
+            // Core Class Information
+            LogUtils.getLogger().info(" - Is Public: ${classInfo.isPublic}")
+            LogUtils.getLogger().info(" - Is Private: ${classInfo.isPrivate}")
+            LogUtils.getLogger().info(" - Is Protected: ${classInfo.isProtected}")
+            LogUtils.getLogger().info(" - Is Abstract: ${classInfo.isAbstract}")
+            LogUtils.getLogger().info(" - Is Synthetic: ${classInfo.isSynthetic}")
+            LogUtils.getLogger().info(" - Is Final: ${classInfo.isFinal}")
+            LogUtils.getLogger().info(" - Is Static: ${classInfo.isStatic}")
+            LogUtils.getLogger().info(" - Is Interface: ${classInfo.isInterface}")
+            LogUtils.getLogger().info(" - Is Enum: ${classInfo.isEnum}")
+            LogUtils.getLogger().info(" - Is Record: ${classInfo.isRecord}")
+            LogUtils.getLogger().info(" - Is Standard Class: ${classInfo.isStandardClass()}")
+            LogUtils.getLogger().info(" - Is Inner Class: ${classInfo.isInnerClass}")
+            LogUtils.getLogger().info(" - Is Outer Class: ${classInfo.isOuterClass}")
+            LogUtils.getLogger().info(" - Is Anonymous Inner Class: ${classInfo.isAnonymousInnerClass}")
+            LogUtils.getLogger().info(" - Is External Class: ${classInfo.isExternalClass()}")
+
+            // Classfile Info
+            LogUtils.getLogger().info(" - Classfile Version: ${classInfo.getClassfileMajorVersion()}.${classInfo.getClassfileMinorVersion()}")
+
+            // Package and Path Information
+            LogUtils.getLogger().info(" - Package Name: ${classInfo.getPackageName()}")
+            LogUtils.getLogger().info(" - Class Path: ${classInfo.getClasspathElementFile()}")
+
+            // Superclass & Interface Information
+            LogUtils.getLogger().info(" - Superclasses: ${classInfo.getSuperclasses().map { it.name }}")
+            LogUtils.getLogger().info(" - Interfaces: ${classInfo.getInterfaces().map { it.name }}")
+            LogUtils.getLogger().info(" - Implemented Interfaces: ${classInfo.getInterfaces().map { it.name }}")
+
+            // Outer & Inner Classes
+            LogUtils.getLogger().info(" - Outer Classes: ${classInfo.getOuterClasses().map { it.name }}")
+            LogUtils.getLogger().info(" - Inner Classes: ${classInfo.getInnerClasses().map { it.name }}")
+
+            // Field Information
+            val fields = classInfo.fieldInfo
+                .joinToString("\n") { fieldInfo ->
+                    "   - ${fieldInfo.name}: ${fieldInfo.typeSignatureOrTypeDescriptor}"
+                }
+            if (fields.isNotEmpty()) {
+                LogUtils.getLogger().info("Fields:\n$fields")
+            } else {
+                LogUtils.getLogger().info(" - No Fields Found")
+            }
+
+            // Method Information
+            val methods = classInfo.methodInfo
+                .joinToString("\n") { methodInfo ->
+                    val params = methodInfo.parameterInfo.joinToString(", ") { param ->
+                        "${param.typeSignatureOrTypeDescriptor} ${param.name ?: ""}".trim()
+                    }
+                    "   - ${methodInfo.name}(${params})"
+                }
+            if (methods.isNotEmpty()) {
+                LogUtils.getLogger().info("Methods:\n$methods")
+            } else {
+                LogUtils.getLogger().info(" - No Methods Found")
+            }
+
+            // Annotation Information
+            val annotations = classInfo.annotationInfo
+                .joinToString("\n") { annotationInfo ->
+                    "   - ${annotationInfo.name}"
+                }
+            if (annotations.isNotEmpty()) {
+                LogUtils.getLogger().info("Annotations:\n$annotations")
+            } else {
+                LogUtils.getLogger().info(" - No Annotations Found")
+            }
+
+            // Module Information
+            val moduleInfo = classInfo.getModuleInfo()
+            if (moduleInfo != null) {
+                LogUtils.getLogger().info(" - Module Name: ${moduleInfo.name}")
+            }
+
+            // Source and Origin Information
+            LogUtils.getLogger().info(" - Source Location: ${classInfo.getClasspathElementFile()}")
+
+
+        } else {
+            LogUtils.getLogger().info("Class `$name` not found.")
+        }
+    }
     fun dumpClassesToFile(sourcesDir: File) {
+        val binOutputPath = File(sourcesDir, "available_classes.bin").apply {
+            parentFile.mkdirs()
+        }
+        val excludedPackages = listOf(
+            "java.lang", "java.io", "java.nio", "java.util.jar", "java.util.zip",
+            "java.net", "sun", "com.sun", "io.netty",
+            "org.objectweb.asm", "org.spongepowered.asm",
+            "org.openjdk.nashorn", "jdk.nashorn"
+        )
+        val classList = CopyOnWriteArrayList<String>()
+        val futures = ClassGraph()
+            .enableClassInfo()
+            .enableSystemJarsAndModules()
+            .enableAnnotationInfo()
+            .scan()
+            .allClasses
+            .filter {it.isPublic  && !it.name.matches(Regex(".*\\$\\d+"))
+            }
+            .filter { classInfo ->
+                !excludedPackages.any { classInfo.name.startsWith(it) }
+            }
+            .map { clazz ->
+                if (clazz.hasAnnotation("kotlin.jvm.JvmName") || (clazz.name.startsWith("kotlin") && clazz.name.endsWith("Kt"))) {
+                    KotlinScriptInit.isValidImport(clazz.name, "import").thenAccept { isValidImport ->
+                        if (isValidImport) {
+                          /*  LogUtils.getLogger().info("Testing class: " + clazz.name + ", true")*/
+                            classList.add(clazz.name)
+                        }/* else {
+                            LogUtils.getLogger().info("Testing class: " + clazz.name + ", false")
+                        }*/
+                    }
+                }else {
+                    classList.add(clazz.name)
+                    CompletableFuture.completedFuture(true)
+                }
+            }
+        CompletableFuture.allOf(*futures.toTypedArray()).join()
+        binOutputPath.writeText(classList.joinToString("\n"))
+        LogUtils.getLogger().info("✅ Dumped ${classList.size} importable classes to ${binOutputPath.absolutePath}")
+    }
+
+    // Dumps only valid KotlinScript-importable classes
+   /* fun dumpClassesToFile(sourcesDir: File) {
+        val binOutputPath = File(sourcesDir, "available_classes.bin").apply {
+            parentFile.mkdirs()
+        }
+        val skipEvalCheck = listOf(
+            "net.minecraft", "dev.architectury", "org.apache"
+        )
+        val excludedPackages = listOf(
+            "java.lang", "java.io", "java.nio", "java.util.jar", "java.util.zip",
+            "java.net", "sun", "com.sun", "io.netty",
+            "org.objectweb.asm", "org.spongepowered.asm",
+            "org.openjdk.nashorn", "jdk.nashorn"
+        )
+
+        val validImportsCache = ConcurrentHashMap<String, Boolean>()
+        val classList = CopyOnWriteArrayList<String>()
+
+        val futures = ClassGraph()
+            .enableClassInfo()
+            .enableSystemJarsAndModules()
+            .scan()
+            .allClasses
+            .filter {it.isPublic  && !it.isAnonymousInnerClass&& !it.name.matches(Regex(".*\\$\\d+")) } // Exclude synthetic inner classes
+            .filter { classInfo ->
+                !excludedPackages.any { classInfo.name.startsWith(it) } // Exclude specified packages
+            }
+            .map { clazz ->
+                if (skipEvalCheck.any { clazz.name.startsWith(it) } || (clazz.isOuterClass || (!clazz.isOuterClass && clazz.isInnerClass))) {
+                    // Directly add known valid classes without async overhead
+                    classList.add(clazz.name)
+                    CompletableFuture.completedFuture(true) // Bypass `isValidImport()` for these
+                } else{
+                    // Only evaluate via `isValidImport()` if necessary
+                    KotlinScriptInit.isValidImport(clazz.name, "import").thenAccept { isValidImport ->
+                        if (isValidImport) {
+                            //LogUtils.getLogger().info("Testing class: " + clazz.name+ ", true")
+                            classList.add(clazz.name)
+                        }else {
+                            LogUtils.getLogger().info("Testing class: " + clazz.name+ ", false")
+                        }
+                    }
+                }
+            }
+
+        // Wait for all futures to complete
+        CompletableFuture.allOf(*futures.toTypedArray()).join()
+
+        binOutputPath.writeText(classList.joinToString("\n"))
+        LogUtils.getLogger().info("✅ Dumped ${classList.size} importable classes to ${binOutputPath.absolutePath}")
+    }*/
+
+    /*
+
+    fun dumpClassesToFile(sourcesDir: File) = runBlocking {
+        val binOutputPath = File(sourcesDir, "available_classes.bin").apply {
+            parentFile.mkdirs()
+        }
+
+        val validImportsCache = ConcurrentHashMap<String, Boolean>()
+        val classList = CopyOnWriteArrayList<String>()
+
+        val tasks = ClassGraph()
+            .enableClassInfo()
+            .enableSystemJarsAndModules()
+            .scan()
+            .allClasses
+            .filter { it.isPublic && !it.name.matches(Regex(".*\\$\\d+")) &&
+                    it.isOuterClass
+            }
+            .map { clazz ->
+                async(Dispatchers.IO) {
+                    val isValidImport = validImportsCache.computeIfAbsent(clazz.name) {
+                        runBlocking { KotlinScriptInit.isValidImport(clazz.name, "import") }
+                    }
+
+                    if (isValidImport *//*|| (clazz.isOuterClass || (!clazz.isOuterClass && clazz.isInnerClass))*//*) {
+                        LogUtils.getLogger().info("Testing class: " + clazz.name + ", true")
+                        classList.add(clazz.name)
+                    }else {
+                        LogUtils.getLogger().info("Testing class: " + clazz.name+ ", false")
+                    }
+                }
+            }
+
+        tasks.awaitAll()  // Wait for all async evaluations to complete
+
+        binOutputPath.writeText(classList.joinToString("\n"))
+        LogUtils.getLogger().info("✅ Dumped ${classList.size} importable classes to ${binOutputPath.absolutePath}")
+    }*/
+    /* fun dumpClassesToFile(sourcesDir: File) {
         val binOutputPath = File(sourcesDir, "available_classes.bin").apply {
             parentFile.mkdirs()
         }
@@ -253,12 +485,15 @@ class FabricBootstrap : ModInitializer {
             .enableSystemJarsAndModules()
             .scan()
             .allClasses
-            .filter { it.isPublic }
+            .filter {
+                it.isPublic &&
+                        (it.isOuterClass || (!it.isOuterClass && it.isInnerClass)) // Include classes that are inner classes explicitly
+            }
             .names
             .filter { !it.matches(Regex(".*\\$\\d+")) }
         binOutputPath.writeText(classList.joinToString("\n"))
         LogUtils.getLogger().info("Dumped ${classList.size} classes to ${binOutputPath.absolutePath}")
-    }
+    }*/
     fun extractTopLevelFunctions(sourcePath: String): List<KotlinObject> {
         val disposable: Disposable = Disposer.newDisposable()
         val configuration = CompilerConfiguration().apply {

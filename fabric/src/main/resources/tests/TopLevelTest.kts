@@ -6,8 +6,15 @@ import net.minecraft.world.entity.LivingEntity
 import net.minecraft.world.entity.item.ItemEntity
 import net.minecraft.world.item.ItemStack
 import net.minecraft.client.Minecraft
-String
-String(StringBuilder())
+import com.mojang.realmsclient.Unit
+import kotlin.reflect.jvm.internal.impl.utils.addToStdlib.AddToStdlibKt
+import kotlin.script.experimental.jvm.compat.DiagnosticsUtilKt
+import kotlinx.atomicfu.AtomicIntt
+
+import org.jetbrains.kotlin.codegen.CommonVariableAsmNameManglingUtils
+var varName: Unit = _OneToManyTitlecaseMappingsKt
+var varName: Unit = System.Logger.Level
+KClasses
 class Test {
 
     fun a(x: Any, y: Any) {

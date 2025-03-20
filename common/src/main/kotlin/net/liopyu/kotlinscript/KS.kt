@@ -7,8 +7,6 @@ import kotlin.script.experimental.jvmhost.BasicJvmScriptingHost
 import kotlin.script.experimental.jvmhost.createJvmCompilationConfigurationFromTemplate
 
 data class KS(val script: String) {
-
-
     val defaultImports = listOf(
         //Kotlin Packages
         "kotlin.reflect.*",
@@ -34,8 +32,6 @@ data class KS(val script: String) {
             )
         }
     }
-
-
     fun eval(): ResultWithDiagnostics<EvaluationResult> {
         val result = BasicJvmScriptingHost().eval(compile(), configuration, null)
         return result
@@ -43,5 +39,7 @@ data class KS(val script: String) {
     private fun compile(): SourceCode {
         return script.toScriptSource()
     }
+
+
 
 }
