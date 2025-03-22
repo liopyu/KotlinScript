@@ -35,7 +35,7 @@ public class ClassScanner {
                /* for (Class<?> c : this.getClass().getClasses()) {
                     classNames.add(c.getName());
                 }*/
-                return classNames;
+        return classNames;
         /*
 
         try {
@@ -58,6 +58,7 @@ public class ClassScanner {
 
         return classNames;*/
     }
+
     private static final Logger LOGGER = Logger.getLogger(ClassScanner.class.getName());
 
     public static Set<Class<?>> getClassesInPackage(String packageName) {

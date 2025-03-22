@@ -1,58 +1,112 @@
-package tests
-import net.minecraft.world.entity.EntityType
-import net.minecraft.world.entity.EquipmentSlot
-import net.minecraft.world.entity.HumanoidArm
-import net.minecraft.world.entity.LivingEntity
-import net.minecraft.world.entity.item.ItemEntity
-import net.minecraft.world.item.ItemStack
+package some
+.thing
+
 import net.minecraft.client.Minecraft
-import com.mojang.realmsclient.Unit
-import kotlin.reflect.jvm.internal.impl.utils.addToStdlib.AddToStdlibKt
-import kotlin.script.experimental.jvm.compat.DiagnosticsUtilKt
-import kotlinx.atomicfu.AtomicIntt
+import net.minecraft.sounds.Musics
+import net.minecraft.world.entity.EntityType.Builder
+import net.minecraft.network.protocol.Packet
+import net.minecraft.nbt.CompoundTag
+import net.minecraft.world.entity.Entity
+import net.minecraft.world.entity.SpawnGroupData
+import net.minecraft.core.Registry
+import net.minecraft.sounds.SoundSource
+import net.minecraft.sounds.SoundEvents
+import net.minecraft.world.InteractionHand
+import net.minecraft.world.InteractionResult
+import net.minecraft.world.entity.player.Player
+import net.minecraft.world.level.Level
+import net.minecraft.world.entity.EntityType
+import kotlin.internal.PureReifiable
 
-import org.jetbrains.kotlin.codegen.CommonVariableAsmNameManglingUtils
-var varName: Unit = _OneToManyTitlecaseMappingsKt
-var varName: Unit = System.Logger.Level
-KClasses
-class Test {
+// Flying Entity Class
+Entity().ELEMENT_NODE
+class FlyingEntity(
+    entityType: EntityType<out Entity>,
+    world: Level
+) : Entity(entityType, world) {
 
-    fun a(x: Any, y: Any) {
-        val some: Minecraft
+    var altitude = 100.0
+    var speed = 1.5
+
+    init {
+        noClip = true // Allows this entity to pass through solid objects
     }
-    inline fun hello() = println("Hello from script1.kts!")
+
+    override fun tick() {
+        super.tick()
+        if (!world.isClient) {
+            moveInAir()
+        }
+    }
+
+    private fun moveInAir() {
+        velocity = velocity.add(0.0, 0.02, 0.0) // Ascending movement
+        if (altitude > 200) {
+            velocity = velocity.multiply(1.0, 0.0, 1.0) // Cap the altitude
+        }
+    }
+
+    override fun onPlayerCollision(player: Player) {
+        player.damage(damageSources.magic(), 2.0f) // Deal light damage to players on contact
+    }
+
+    override fun interact(
+        player: Player,
+        hand: InteractionHand
+    ): InteractionResult {
+        if (!world.isClient) {
+            player.sendMessage("You feel a gust of wind as the entity soars past!", true)
+        }
+        return InteractionResult.SUCCESS
+    }
+
+    override fun initDataTracker() {
+        // Initialize entity data here
+    }
+
+    override fun readCustomDataFromNbt(nbt: CompoundTag) {
+        altitude = nbt.getDouble("Altitude")
+        speed = nbt.getDouble("Speed")
+    }
+
+    override fun writeCustomDataToNbt(nbt: CompoundTag) {
+        nbt.putDouble("Altitude", altitude)
+        nbt.putDouble("Speed", speed)
+    }
+
+    override fun createSpawnPacket(): Packet<*>? {
+        return super.createSpawnPacket()
+    }
+
+    override fun playSpawnEffects() {
+        world.playSound(
+            null,
+            this.blockPos,
+            SoundEvents.ENTITY_ENDER_DRAGON_FLAP,
+            SoundSource.HOSTILE,
+            1.0f,
+            1.0f
+        )
+    }
+
+    companion object {
+        fun registerEntity() {
+            Registry.register(
+                Registry.ENTITY_TYPE,
+                "flying_entity",
+                Builder.create(::FlyingEntity, SpawnGroupData.CREATURE)
+                    .setDimensions(1.0f, 1.0f)
+                    .build("flying_entity")
+            )
+        }
+    }
 }
-try {
-    val propertyName by lazy {
 
+fun calculateSum(numbers: List<Int>): Unit {
+    var sum = 0 // `sum` is highlighted as a scoped variable
+    for (number in numbers) {
+        sum += number
+// Both `sum` and `number` are highlighted as scoped variables
     }
-} catch (e: Exception) {
-    TODO("Not yet implemented")
-}
-class SomeEntity(entityType: EntityType<out LivingEntity>, level: Level) : LivingEntity(entityType, level) {
-    override fun getArmorSlots(): MutableIterable<ItemStack> {
-        TODO("Not yet implemented")
-    }
-
-    override fun getItemBySlot(slot: EquipmentSlot): ItemStack {
-        TODO("Not yet implemented")
-    }
-
-    override fun setItemSlot(slot: EquipmentSlot, stack: ItemStack) {
-        TODO("Not yet implemented")
-    }
-
-    override fun getMainArm(): HumanoidArm {
-        TODO("Not yet implemented")
-    }
-
-    override fun spawnAtLocation(stack: ItemStack, offsetY: Float): ItemEntity? {
-        stack.item.isFoil(stack)
-        moveDist
-        return super.spawnAtLocation(stack, offsetY)
-    }
-    override fun updateSwimming() {
-        //super.updateSwimming()
-
-    }
+    return  // `return` is highlighted as a keyword
 }
