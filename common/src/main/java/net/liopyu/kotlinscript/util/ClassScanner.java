@@ -18,6 +18,12 @@ public class ClassScanner {
         }
     }
 
+    public static final class Companion {
+        Companion() {
+
+        }
+    }
+
     public static void widenClassesField() {
         try {
             Unsafe unsafe = getUnsafe();

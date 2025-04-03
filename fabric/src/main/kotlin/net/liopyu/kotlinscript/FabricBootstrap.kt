@@ -29,9 +29,19 @@ import java.lang.reflect.Modifier
 import java.nio.file.Files
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.reflect.KVisibility
+import kotlin.reflect.full.functions
+import kotlin.reflect.full.memberProperties
 import kotlin.system.measureTimeMillis
 
 class FabricBootstrap : ModInitializer {
+    companion object {
+        fun someStaticMethod(): String = "Hello from Companion Object!"
+        val someValue: Int = 10
+        val SOMETHING = ""
+        fun getOtherValue(): Int = 20
+    }
+
     override fun onInitialize() {
         KotlinScriptInit.preInitialize()
         val instanceDir = File(System.getProperty("user.dir"))
@@ -54,16 +64,83 @@ class FabricBootstrap : ModInitializer {
             val newSimpleName = if (currentCount > 0) obj.fullyQualifiedName else obj.simpleName
             obj.copy(simpleName = newSimpleName)
         }
-        saveSuggestionsToJson(enrichedSuggestions, "kotlin_suggestions.json")
+        //saveSuggestionsToJson(enrichedSuggestions, "kotlin_suggestions.json")
         var l = listOf(
-            "net.minecraft.world.entity.Entity",
-            "net.minecraft.world.entity.LivingEntity"
+            /* "net.minecraft.world.entity.Entity",
+             "net.minecraft.world.entity.LivingEntity",*/
+            "net.liopyu.kotlinscript.FabricBootstrap",
+            "net.liopyu.kotlinscript.FabricBootstrap\$Companion",
+            /*"net.liopyu.kotlinscript.util.ClassScanner"*/
         )
-        dumpClassesToFile(sourcesDir, l/*dumpClassesToFile(sourcesDir)*/)
+        val list = dumpClassesToFile(sourcesDir)
+        // dumpClassesToFile(sourcesDir, l)
+        dumpCompanionObjectsToFile(sourcesDir, l)
+        //Utils.something()
+
         //inspectClassDetails("org.jetbrains.kotlin.codegen.CommonVariableAsmNameManglingUtils")
         //dumpClassesWithFernFlower(sourcesDir)
     }
 
+
+    fun dumpCompanionObjectsToFile(sourcesDir: File, filteredClasses: List<String>) {
+        val logger = LogUtils.getLogger()
+        val jsonOutputPath = File(sourcesDir, "companion_objects.json").apply {
+            parentFile.mkdirs()
+        }
+        val companionMap = mutableMapOf<String, MutableMap<String, Any>>()
+        val scanResult = ClassGraph()
+            .enableClassInfo()
+            .enableMethodInfo()
+            .enableFieldInfo()
+            .enableAnnotationInfo()
+            .enableSystemJarsAndModules()
+            .scan()
+        scanResult.allClasses
+            .filter { classInfo ->
+                classInfo.name in filteredClasses &&
+                        classInfo.name.endsWith("\$Companion") &&
+                        classInfo.constructorInfo.toString().contains("synthetic")
+            }
+            .forEach { clazz ->
+                val companionEntry = mutableMapOf<String, Any>()
+                val someClass = Class.forName(clazz.name, false, this.javaClass.classLoader)
+                //logger.info("Getting class: " + someClass.name + " from: " + clazz.name + ", for: " + someClass.kotlin.toString())
+                someClass.kotlin.functions
+                    .filter { it.visibility == KVisibility.PUBLIC }
+                    .forEach { method ->
+                        val methodName = method.name
+                        val returnType = method.returnType.toString()
+                        val methodEntry = mutableMapOf<String, Any>()
+                        methodEntry["returns"] = returnType.orEmpty()
+                        if (method.parameters.isNotEmpty()) {
+                            methodEntry["args"] = method.parameters.map {
+                                it.type.toString()
+                            }
+                        }
+                        companionEntry[methodName] = methodEntry
+
+                    }
+                someClass.kotlin.memberProperties
+                    .filter { it.visibility == KVisibility.PUBLIC }
+                    .forEach { field ->
+                        val fieldEntry = mutableMapOf<String, Any>()
+                        fieldEntry["returns"] = field.returnType.toString()
+
+                        companionEntry[field.name] = fieldEntry
+                    }
+                if (companionEntry.isNotEmpty()) {
+                    companionMap[clazz.name.removeSuffix("\$Companion")] = companionEntry
+                }
+            }
+        val gson = GsonBuilder()
+            .setPrettyPrinting()
+            .disableHtmlEscaping()
+            .create()
+
+        val jsonOutput = gson.toJson(companionMap)
+        jsonOutputPath.writeText(jsonOutput)
+        logger.info("✅ Dumped companion object data to ${jsonOutputPath.absolutePath}")
+    }
 
     fun dumpClassesWithFernFlower(sourcesDir: File) {
         runBlocking {
@@ -365,6 +442,7 @@ class FabricBootstrap : ModInitializer {
         }
     }
 
+
     fun dumpClassesToFile(sourcesDir: File): List<String> {
         val binOutputPath = File(sourcesDir, "available_classes.bin").apply {
             parentFile.mkdirs()
@@ -382,11 +460,12 @@ class FabricBootstrap : ModInitializer {
             .enableAnnotationInfo()
             .scan()
             .allClasses
-            .filter {
-                it.isPublic && !it.name.matches(Regex(".*\\$\\d+"))
-            }
             .filter { classInfo ->
-                !excludedPackages.any { classInfo.name.startsWith(it) }
+                classInfo.isPublic && !classInfo.name.matches(Regex(".*\\$\\d+")) && !excludedPackages.any {
+                    classInfo.name.startsWith(
+                        it
+                    )
+                }
             }
             .map { clazz ->
                 if (clazz.hasAnnotation("kotlin.jvm.JvmName") || (clazz.name.startsWith("kotlin") && clazz.name.endsWith(
@@ -562,11 +641,10 @@ class FabricBootstrap : ModInitializer {
 
                 clazz.fieldInfo
                     .filter { field ->
-                        LogUtils.getLogger().info(field.className)
                         return@filter field.isPublic &&
                                 !field.name.contains("$") &&
                                 field.name in declaredFieldNames &&
-                                (field.className == clazz.name || field.)
+                                (field.className == clazz.name)
                     }
                     .forEach { field ->
                         val fieldEntry = mutableMapOf<String, Any>()
@@ -613,3 +691,4 @@ class FabricBootstrap : ModInitializer {
         file.writeText(json)
     }
 }
+

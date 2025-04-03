@@ -1,6 +1,3 @@
-
-
-
 package net.liopyu.kotlinscript
 
 import kotlinx.coroutines.Dispatchers
@@ -18,16 +15,18 @@ import kotlin.script.experimental.api.ResultWithDiagnostics
 object KotlinScriptInit {
     val logger: Logger = LogManager.getLogger()
     val debugLogging: Boolean = false
-    fun info(i: String){
+    fun info(i: String) {
         if (debugLogging)
-        logger.info(i)
+            logger.info(i)
     }
+
     fun testKotlinSuggestions(suggestions: List<KotlinObject>): List<KotlinObject> = runBlocking {
         suggestions.map { suggestion ->
             async(Dispatchers.Default) {
                 if (isValidSuggestion(suggestion.fullyQualifiedName, suggestion.type) ||
                     isValidSuggestion(suggestion.simpleName, suggestion.type) ||
-                    isValidSuggestion(suggestion.source, suggestion.type)) {
+                    isValidSuggestion(suggestion.source, suggestion.type)
+                ) {
                     suggestion
                 } else {
                     null
@@ -35,8 +34,31 @@ object KotlinScriptInit {
             }
         }.awaitAll().filterNotNull()
     }
+
     private val importCache = ConcurrentHashMap<String, Boolean>()
     private val executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors())
+    fun isValidKotlinScript(suggestion: String?): CompletableFuture<Boolean> {
+        if (suggestion.isNullOrBlank()) return CompletableFuture.completedFuture(false)
+        val suggestionToEval = "$suggestion"
+        return CompletableFuture.supplyAsync({
+            try {
+                val ks = KS(suggestionToEval)
+                val result = ks.eval()
+
+                val isValid = when (result) {
+                    is ResultWithDiagnostics.Success -> true
+                    is ResultWithDiagnostics.Failure -> {
+                        !result.reports.any { it.message.contains("Unresolved reference") }
+                    }
+
+                    else -> false
+                }
+                isValid
+            } catch (e: Exception) {
+                false
+            }
+        }, executor)
+    }
 
     fun isValidImport(suggestion: String?, type: String): CompletableFuture<Boolean> {
         if (suggestion.isNullOrBlank()) return CompletableFuture.completedFuture(false)
@@ -65,6 +87,7 @@ object KotlinScriptInit {
                     is ResultWithDiagnostics.Failure -> {
                         !result.reports.any { it.message.contains("Unresolved reference") }
                     }
+
                     else -> false
                 }
 
@@ -88,6 +111,7 @@ object KotlinScriptInit {
                     info("Valid ($type): $suggestionToEval")
                     true
                 }
+
                 is ResultWithDiagnostics.Failure -> {
                     val errors = result.reports.map { it.message }
                     val hasFlaggedError = errors.any { error ->
@@ -103,6 +127,7 @@ object KotlinScriptInit {
                         true
                     }
                 }
+
                 else -> false
             }
         } catch (e: Exception) {
@@ -110,6 +135,7 @@ object KotlinScriptInit {
             false
         }
     }
+
     fun preInitialize() {
         KotlinScriptLoader.loadScripts()
     }

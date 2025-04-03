@@ -110,3 +110,21 @@ fun calculateSum(numbers: List<Int>): Unit {
     }
     return  // `return` is highlighted as a keyword
 }
+net.liopyu.kotlinscript.util.ClassScanner
+class SomeClass {
+    companion object {
+        fun someStaticMethod() = "Hello from Companion Object!"
+        val value = 10
+    }
+
+    val someMethod = SomeClass // Store a reference to the companion object
+}
+
+fun main() {
+    val instance = net.liopyu.kotlinscript.FabricBootstrap.getSomeValue()
+    instance.let { it.someMethod.someStaticMethod() }
+    println(instance.someMethod.someStaticMethod()) // ✅ Works!
+}
+
+var something =
+    something.someStaticMethod()

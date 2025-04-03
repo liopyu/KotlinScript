@@ -1,6 +1,7 @@
 package net.liopyu.kotlinscript.mixin;
 
 import com.mojang.logging.LogUtils;
+import net.liopyu.kotlinscript.FabricBootstrap;
 import net.liopyu.kotlinscript.KotlinScriptLoader;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.server.commands.ReloadCommand;
@@ -9,8 +10,8 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
+import java.lang.reflect.Method;
 import java.util.Collection;
-
 
 
 @Mixin(value = ReloadCommand.class, remap = true)
@@ -20,7 +21,7 @@ public class ReloadMixin {
         try {
             KotlinScriptLoader.loadScripts();
         } catch (Exception e) {
-            LogUtils.getLogger().error("",e);
+            LogUtils.getLogger().error("", e);
         }
 
     }
