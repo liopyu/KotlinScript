@@ -1,6 +1,7 @@
 package some
 .thing
 
+import net.liopyu.kotlinscript.FabricBootstrap
 import net.minecraft.client.Minecraft
 import net.minecraft.sounds.Musics
 import net.minecraft.world.entity.EntityType.Builder
@@ -17,7 +18,9 @@ import net.minecraft.world.entity.player.Player
 import net.minecraft.world.level.Level
 import net.minecraft.world.entity.EntityType
 import kotlin.internal.PureReifiable
+import net.liopyu.kotlinscript.util.ClassScanner
 
+PureReifiable
 // Flying Entity Class
 Entity().ELEMENT_NODE
 class FlyingEntity(
@@ -121,9 +124,10 @@ class SomeClass {
 }
 
 fun main() {
-    val instance = net.liopyu.kotlinscript.FabricBootstrap.getSomeValue()
-    instance.let { it.someMethod.someStaticMethod() }
-    println(instance.someMethod.someStaticMethod()) // ✅ Works!
+    val instance: ClassScanner = ClassScanner()
+    val instance2: FabricBootstrap.Companion = FabricBootstrap
+    instance2.getOtherValue()
+    instance()
 }
 
 var something =

@@ -2,9 +2,14 @@ import kotlin.*
 import kotlin.math.IEEErem
 import kotlin.math.abs
 import kotlin.time.saturatingAdd
+import kotlinx.metadata.internal.metadata.deserialization.BinaryVersion
+import net.liopyu.kotlinscript.FabricBootstrap
+import net.minecraft.client.Minecraft
+BinaryVersion.parseVersionArray(kotlinx.metadata.internal.metadata.deserialization.BinaryVersion.Companion, "")
 saturatingAdd()
 fun functionName(paramName: String): Unit {
-
+    var some: FabricBootstrap = FabricBootstrap.someValue
+    some
 }
 abs()
 fun Unit.functionName(param: String): Unit {

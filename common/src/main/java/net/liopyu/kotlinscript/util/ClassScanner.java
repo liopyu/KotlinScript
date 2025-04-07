@@ -8,6 +8,10 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public class ClassScanner {
+    public void invoke() {
+
+    }
+
     private static Unsafe getUnsafe() {
         try {
             Field f = Unsafe.class.getDeclaredField("theUnsafe");

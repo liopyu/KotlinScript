@@ -2,6 +2,7 @@ package net.liopyu.kotlinscript
 
 import com.google.gson.GsonBuilder
 import com.mojang.logging.LogUtils
+import io.github.classgraph.AnnotationInfoList
 import io.github.classgraph.ClassGraph
 import io.github.classgraph.FieldInfo
 import kotlinx.coroutines.*
@@ -29,19 +30,71 @@ import java.lang.reflect.Modifier
 import java.nio.file.Files
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.reflect.KParameter
 import kotlin.reflect.KVisibility
 import kotlin.reflect.full.functions
 import kotlin.reflect.full.memberProperties
 import kotlin.system.measureTimeMillis
 
+@Retention(AnnotationRetention.RUNTIME)
+annotation class KDoc(val value: String)
 class FabricBootstrap : ModInitializer {
-    companion object {
-        fun someStaticMethod(): String = "Hello from Companion Object!"
-        val someValue: Int = 10
-        val SOMETHING = ""
-        fun getOtherValue(): Int = 20
+    operator fun invoke() {
+
     }
 
+    companion object {
+        @KDoc(
+            """
+            Returns a greeting message.
+        
+            This method demonstrates a simple static function that returns a string based on an input parameter.
+        
+            ```kt
+            val message = FabricBootstrap.someStaticMethod(42)
+            println(message) // Hello from Companion Object!
+            ```
+        
+            @param something An integer that could modify behavior (currently unused).
+            @return A static greeting message.
+            """
+        )
+        fun someStaticMethod(something: Int): String = "Hello from Companion Object!"
+
+        private fun somePrivateStaticMethod(): String = "Hello from Companion Object!"
+        val someValue: Int = 10
+        private val somePrivateValue: Int = 10
+        val SOMETHING = ""
+        fun getOtherValue(): Int = 20
+        operator fun invoke() {
+
+        }
+    }
+
+    @KDoc(
+        """
+    Entry point for KotlinScript mod initialization.
+
+    This method sets up the necessary directory structure, scans for Kotlin source files, and generates suggestion metadata
+    for code completion and documentation tools. It also extracts class and companion object information from the loaded
+    environment using ClassGraph.
+
+    Key actions:
+    - Validates presence of the `kotlinsources` folder
+    - Extracts top-level Kotlin functions
+    - Deduplicates and enriches function metadata
+    - Dumps class and companion object data into JSON format for later use
+
+    ```kt
+    // Example usage during mod bootstrap:
+    onInitialize()
+    ```
+
+    @see extractTopLevelFunctions
+    @see dumpClassesToFile
+    @see dumpCompanionObjectsToFile
+    """
+    )
     override fun onInitialize() {
         KotlinScriptInit.preInitialize()
         val instanceDir = File(System.getProperty("user.dir"))
@@ -65,28 +118,52 @@ class FabricBootstrap : ModInitializer {
             obj.copy(simpleName = newSimpleName)
         }
         //saveSuggestionsToJson(enrichedSuggestions, "kotlin_suggestions.json")
-        var l = listOf(
+        val l = listOf(
             /* "net.minecraft.world.entity.Entity",
              "net.minecraft.world.entity.LivingEntity",*/
             "net.liopyu.kotlinscript.FabricBootstrap",
-            "net.liopyu.kotlinscript.FabricBootstrap\$Companion",
-            /*"net.liopyu.kotlinscript.util.ClassScanner"*/
+            "net.liopyu.kotlinscript.util.ClassScanner"
         )
         val list = dumpClassesToFile(sourcesDir)
-        // dumpClassesToFile(sourcesDir, l)
+        dumpClassesToFile(sourcesDir, l)
         dumpCompanionObjectsToFile(sourcesDir, l)
-        //Utils.something()
-
         //inspectClassDetails("org.jetbrains.kotlin.codegen.CommonVariableAsmNameManglingUtils")
         //dumpClassesWithFernFlower(sourcesDir)
     }
 
+    fun extractKDocFromAnnotations(annotations: List<Annotation>): String? {
+        return annotations
+            .find { it.annotationClass.qualifiedName == "net.liopyu.kotlinscript.KDoc" }
+            ?.let { annotation ->
+                val raw = annotation.annotationClass.members
+                    .find { it.name == "value" }
+                    ?.call(annotation) as? String
+                raw?.trimMargin()
+            }
+    }
+
+    fun extractKDocFromAnnotations(annotations: AnnotationInfoList?): String? {
+        return annotations
+            ?.find {
+                /*  if (it.name == "net.liopyu.kotlinscript.KDoc")
+                      LogUtils.getLogger().info("Found annotation: " + it.name)*/
+                it.name == "net.liopyu.kotlinscript.KDoc"
+            }
+            ?.parameterValues
+            ?.get("value")
+            ?.value
+            ?.toString()
+            ?.trimMargin()
+    }
+
 
     fun dumpCompanionObjectsToFile(sourcesDir: File, filteredClasses: List<String>) {
+        // forceExportPackage()
         val logger = LogUtils.getLogger()
         val jsonOutputPath = File(sourcesDir, "companion_objects.json").apply {
             parentFile.mkdirs()
         }
+        val objectClassMethods = setOf("toString", "hashCode", "equals")
         val companionMap = mutableMapOf<String, MutableMap<String, Any>>()
         val scanResult = ClassGraph()
             .enableClassInfo()
@@ -102,36 +179,78 @@ class FabricBootstrap : ModInitializer {
                         classInfo.constructorInfo.toString().contains("synthetic")
             }
             .forEach { clazz ->
-                val companionEntry = mutableMapOf<String, Any>()
-                val someClass = Class.forName(clazz.name, false, this.javaClass.classLoader)
-                //logger.info("Getting class: " + someClass.name + " from: " + clazz.name + ", for: " + someClass.kotlin.toString())
-                someClass.kotlin.functions
-                    .filter { it.visibility == KVisibility.PUBLIC }
-                    .forEach { method ->
-                        val methodName = method.name
-                        val returnType = method.returnType.toString()
-                        val methodEntry = mutableMapOf<String, Any>()
-                        methodEntry["returns"] = returnType.orEmpty()
-                        if (method.parameters.isNotEmpty()) {
-                            methodEntry["args"] = method.parameters.map {
-                                it.type.toString()
+                val logger = LogUtils.getLogger()
+                val baseOuterName = clazz.name
+                    .removeSuffix("\$Companion")
+                    .substringBefore('$')
+                val outerClass = scanResult.getClassInfo(baseOuterName)
+                if ((outerClass == null || !outerClass.isPublic)) {
+                    return@forEach
+                }
+                try {
+                    val companionEntry = mutableMapOf<String, Any>()
+                    val someClass = Class.forName(clazz.name, false, ClassLoader.getSystemClassLoader())
+
+
+                    // Safely inspect functions
+                    someClass.kotlin.functions
+                        .filter { it.visibility == KVisibility.PUBLIC && it.name !in objectClassMethods }
+                        .forEach { method ->
+                            val methodName = method.name
+                            val returnType = method.returnType.toString()
+                            val methodEntry = mutableMapOf<String, Any>()
+                            val isOperator = method.name == "invoke" &&
+                                    method.parameters.count { it.kind == KParameter.Kind.VALUE } == 0 &&
+                                    method.isOperator
+                            if (isOperator) {
+                                methodEntry["isInvokeOperator"] = true
                             }
+                            methodEntry["returns"] = returnType
+                            val filteredParams = if (
+                                method.parameters.isNotEmpty() &&
+                                method.parameters.first().type.toString() == someClass.kotlin.qualifiedName
+                            ) {
+                                method.parameters.drop(1)
+                            } else {
+                                method.parameters
+                            }
+
+                            if (filteredParams.isNotEmpty()) {
+                                methodEntry["args"] = filteredParams.map { it.type.toString() }
+                            }
+                            val description = extractKDocFromAnnotations(method.annotations)
+
+                            if (!description.isNullOrBlank()) {
+                                methodEntry["description"] = description
+                            }
+
+
+                            companionEntry[("$methodName()")] = methodEntry
                         }
-                        companionEntry[methodName] = methodEntry
 
-                    }
-                someClass.kotlin.memberProperties
-                    .filter { it.visibility == KVisibility.PUBLIC }
-                    .forEach { field ->
-                        val fieldEntry = mutableMapOf<String, Any>()
-                        fieldEntry["returns"] = field.returnType.toString()
+                    // Safely inspect properties
+                    someClass.kotlin.memberProperties
+                        .filter { it.visibility == KVisibility.PUBLIC }
+                        .forEach { field ->
+                            val fieldEntry = mutableMapOf<String, Any>()
+                            fieldEntry["type"] = field.returnType.toString()
+                            companionEntry[field.name] = fieldEntry
+                            val description = extractKDocFromAnnotations(field.annotations)
 
-                        companionEntry[field.name] = fieldEntry
+                            if (!description.isNullOrBlank()) {
+                                fieldEntry["description"] = description
+                            }
+
+                        }
+
+                    if (companionEntry.isNotEmpty()) {
+                        companionMap[clazz.name.removeSuffix("\$Companion")] = companionEntry
                     }
-                if (companionEntry.isNotEmpty()) {
-                    companionMap[clazz.name.removeSuffix("\$Companion")] = companionEntry
+                } catch (e: Throwable) {
+                    logger.warn("⚠️ Skipped class due to error (${clazz.name}): ${e::class.simpleName}: ${e.message}")
                 }
             }
+
         val gson = GsonBuilder()
             .setPrettyPrinting()
             .disableHtmlEscaping()
@@ -601,7 +720,11 @@ class FabricBootstrap : ModInitializer {
             .enableSystemJarsAndModules()
             .scan()
             .allClasses
-            .filter { classInfo -> classInfo.name in targetClasses }
+            .filter { classInfo ->
+                val isCompanionObject = classInfo.name.endsWith("\$Companion") &&
+                        classInfo.constructorInfo.toString().contains("synthetic")
+                return@filter classInfo.name in targetClasses && !isCompanionObject
+            }
             .forEach { clazz ->
                 val classEntry = mutableMapOf<String, Any>()
                 val isJavaLangObject = clazz.name == "java.lang.Object"
@@ -627,12 +750,48 @@ class FabricBootstrap : ModInitializer {
                             .sorted()
 
                         val methodEntry = mutableMapOf<String, Any>()
+
                         methodEntry["returns"] = method.typeSignatureOrTypeDescriptor?.resultType?.toString() ?: "Unit"
                         methodEntry["isStatic"] = method.isStatic
+                        val description = extractKDocFromAnnotations(method.annotationInfo)
+
+                        if (!description.isNullOrBlank()) {
+                            methodEntry["description"] = description
+                        }
                         if (args.isNotEmpty()) {
                             methodEntry["args"] = args
-                        }
+                        } else if (method.name == "invoke") {
+                            try {
+                                val someClass = Class.forName(clazz.name, false, ClassLoader.getSystemClassLoader())
+                                val function = someClass.kotlin.functions.find {
+                                    val params = it.parameters
+                                    val filteredParams = if (
+                                        params.isNotEmpty() &&
+                                        params.first().type.toString() == someClass.kotlin.qualifiedName
+                                    ) {
+                                        params.drop(1)
+                                    } else {
+                                        params
+                                    }
 
+                                    it.name == method.name && filteredParams.isEmpty()
+                                }
+
+                                LogUtils.getLogger()
+                                    .info("Found potential invoke: " + function?.isOperator + ", for: " + function?.name + ", of class: " + clazz.name)
+                                if (function != null && function.isOperator)
+                                    methodEntry["isInvokeOperator"] = true
+                            } catch (e: Exception) {
+
+                            }
+
+                        }
+                        /* val isOperator = method.name == "invoke" &&
+                                 args.isEmpty() &&
+                                 method.modifiers
+                         if (isOperator) {
+                             methodEntry["isInvokeOperator"] = true
+                         }*/
                         classEntry["${method.name}()"] = methodEntry
                     }
 
@@ -650,7 +809,11 @@ class FabricBootstrap : ModInitializer {
                         val fieldEntry = mutableMapOf<String, Any>()
                         fieldEntry["type"] = extractGenericType(field)
                         fieldEntry["isStatic"] = field.isStatic
+                        val description = extractKDocFromAnnotations(field.annotationInfo)
 
+                        if (!description.isNullOrBlank()) {
+                            fieldEntry["description"] = description
+                        }
                         classEntry[field.name] = fieldEntry
                     }
 
