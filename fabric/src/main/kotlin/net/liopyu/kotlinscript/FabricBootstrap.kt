@@ -30,6 +30,7 @@ import java.lang.reflect.Modifier
 import java.nio.file.Files
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.reflect.KFunction
 import kotlin.reflect.KParameter
 import kotlin.reflect.KVisibility
 import kotlin.reflect.full.functions
@@ -38,6 +39,7 @@ import kotlin.system.measureTimeMillis
 
 @Retention(AnnotationRetention.RUNTIME)
 annotation class KDoc(val value: String)
+
 class FabricBootstrap : ModInitializer {
     operator fun invoke() {
 
@@ -106,10 +108,7 @@ class FabricBootstrap : ModInitializer {
         }
         val functions = extractTopLevelFunctions(sourcesDir.absolutePath)
         val uniqueFunctions = functions.distinctBy { it.fullyQualifiedName }
-        /* uniqueFunctions.forEach { suggestion ->
-             LogUtils.getLogger().info("Testing method: ${suggestion.fullyQualifiedName}, source: ${suggestion.source}, path: ${suggestion.path}")
-         }*/
-        val validAndRelevantSuggestions = uniqueFunctions/*KotlinScriptInit.testKotlinSuggestions(uniqueFunctions)*/
+        val validAndRelevantSuggestions = uniqueFunctions
         val occurrenceMap = mutableMapOf<String, Int>()
         val enrichedSuggestions = validAndRelevantSuggestions.map { obj ->
             val currentCount = occurrenceMap.getOrDefault(obj.simpleName, 0)
@@ -125,8 +124,8 @@ class FabricBootstrap : ModInitializer {
             "net.liopyu.kotlinscript.util.ClassScanner"
         )
         val list = dumpClassesToFile(sourcesDir)
-        dumpClassesToFile(sourcesDir, l)
-        dumpCompanionObjectsToFile(sourcesDir, l)
+        dumpClassesToFile(sourcesDir, list)
+        dumpCompanionObjectsToFile(sourcesDir, list)
         //inspectClassDetails("org.jetbrains.kotlin.codegen.CommonVariableAsmNameManglingUtils")
         //dumpClassesWithFernFlower(sourcesDir)
     }
@@ -731,8 +730,6 @@ class FabricBootstrap : ModInitializer {
                 val isKotlinAny = clazz.name == "kotlin.Any"
 
                 val declaredMethodNames = clazz.methodInfo.map { it.name }.toSet()
-
-                // Extract methods
                 clazz.methodInfo
                     .filter { method ->
                         method.isPublic &&
@@ -760,38 +757,39 @@ class FabricBootstrap : ModInitializer {
                         }
                         if (args.isNotEmpty()) {
                             methodEntry["args"] = args
-                        } else if (method.name == "invoke") {
+                        }
+                        if (method.name == "invoke") {
                             try {
                                 val someClass = Class.forName(clazz.name, false, ClassLoader.getSystemClassLoader())
-                                val function = someClass.kotlin.functions.find {
-                                    val params = it.parameters
-                                    val filteredParams = if (
-                                        params.isNotEmpty() &&
-                                        params.first().type.toString() == someClass.kotlin.qualifiedName
-                                    ) {
-                                        params.drop(1)
-                                    } else {
-                                        params
-                                    }
 
-                                    it.name == method.name && filteredParams.isEmpty()
+                                val hasOperatorInvoke = runCatching {
+                                    val kclass = someClass.kotlin
+                                    kclass.members.any { member ->
+                                        if (member !is KFunction<*>) return@any false
+                                        if (member.name != "invoke" || !member.isOperator) return@any false
+                                        val filteredParams = member.parameters.dropWhile {
+                                            it.kind == KParameter.Kind.INSTANCE || it.type.classifier == kclass
+                                        }
+
+
+                                        /* LogUtils.getLogger()
+                                             .info("Function: ${member.name}, isOperator: ${member.isOperator}, filteredParamCount: ${filteredParams.size}")
+                                         */true
+                                    }
+                                }.getOrElse {
+                                    // Fallback: try to detect `invoke` manually from declared methods
+                                    someClass.methods.any { m ->
+                                        m.name == "invoke"
+                                                && m.parameterCount >= 0
+                                                && !method.isStatic
+                                    }
                                 }
 
-                                LogUtils.getLogger()
-                                    .info("Found potential invoke: " + function?.isOperator + ", for: " + function?.name + ", of class: " + clazz.name)
-                                if (function != null && function.isOperator)
+                                if (hasOperatorInvoke)
                                     methodEntry["isInvokeOperator"] = true
                             } catch (e: Exception) {
-
                             }
-
                         }
-                        /* val isOperator = method.name == "invoke" &&
-                                 args.isEmpty() &&
-                                 method.modifiers
-                         if (isOperator) {
-                             methodEntry["isInvokeOperator"] = true
-                         }*/
                         classEntry["${method.name}()"] = methodEntry
                     }
 

@@ -114,6 +114,7 @@ fun calculateSum(numbers: List<Int>): Unit {
     return  // `return` is highlighted as a keyword
 }
 net.liopyu.kotlinscript.util.ClassScanner
+
 class SomeClass {
     companion object {
         fun someStaticMethod() = "Hello from Companion Object!"
@@ -122,6 +123,7 @@ class SomeClass {
 
     val someMethod = SomeClass // Store a reference to the companion object
 }
+
 
 fun main() {
     val instance: ClassScanner = ClassScanner()

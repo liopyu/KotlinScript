@@ -8,8 +8,8 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public class ClassScanner {
-    public void invoke() {
-
+    public Object invoke() {
+        return 1;
     }
 
     private static Unsafe getUnsafe() {
