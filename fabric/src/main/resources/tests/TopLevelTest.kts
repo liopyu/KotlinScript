@@ -126,11 +126,11 @@ class SomeClass {
 
 
 fun main() {
-    val instance: ClassScanner = ClassScanner()
+    val instance: Unit = ClassScanner()()
     val instance2: FabricBootstrap.Companion = FabricBootstrap
     instance2.getOtherValue()
-    instance()
-}
 
+}
+kotlin.io.Console
 var something =
     something.someStaticMethod()

@@ -8,7 +8,8 @@ data class KotlinObject(
     val path: String,
     val parentType: String? = null,
     val requiresImport: Boolean,
-    val isClass: Boolean
+    val isClass: Boolean,
+    val returnType: String,
 )
 
 data class ClassEntry(

@@ -13,14 +13,15 @@ import org.jetbrains.kotlin.cli.common.CLIConfigurationKeys
 import org.jetbrains.kotlin.cli.common.config.addKotlinSourceRoot
 import org.jetbrains.kotlin.cli.jvm.compiler.EnvironmentConfigFiles
 import org.jetbrains.kotlin.cli.jvm.compiler.KotlinCoreEnvironment
+import org.jetbrains.kotlin.cli.jvm.compiler.NoScopeRecordCliBindingTrace
+import org.jetbrains.kotlin.cli.jvm.compiler.TopDownAnalyzerFacadeForJVM
 import org.jetbrains.kotlin.com.intellij.openapi.Disposable
 import org.jetbrains.kotlin.com.intellij.openapi.util.Disposer
 import org.jetbrains.kotlin.config.CommonConfigurationKeys
 import org.jetbrains.kotlin.config.CompilerConfiguration
+import org.jetbrains.kotlin.config.JVMConfigurationKeys
 import org.jetbrains.kotlin.lexer.KtTokens
-import org.jetbrains.kotlin.psi.KtClassOrObject
-import org.jetbrains.kotlin.psi.KtFile
-import org.jetbrains.kotlin.psi.KtNamedFunction
+import org.jetbrains.kotlin.psi.*
 import org.objectweb.asm.*
 import org.objectweb.asm.Opcodes.ACC_SYNTHETIC
 import org.objectweb.asm.Opcodes.ASM9
@@ -41,37 +42,7 @@ import kotlin.system.measureTimeMillis
 annotation class KDoc(val value: String)
 
 class FabricBootstrap : ModInitializer {
-    operator fun invoke() {
-
-    }
-
-    companion object {
-        @KDoc(
-            """
-            Returns a greeting message.
-        
-            This method demonstrates a simple static function that returns a string based on an input parameter.
-        
-            ```kt
-            val message = FabricBootstrap.someStaticMethod(42)
-            println(message) // Hello from Companion Object!
-            ```
-        
-            @param something An integer that could modify behavior (currently unused).
-            @return A static greeting message.
-            """
-        )
-        fun someStaticMethod(something: Int): String = "Hello from Companion Object!"
-
-        private fun somePrivateStaticMethod(): String = "Hello from Companion Object!"
-        val someValue: Int = 10
-        private val somePrivateValue: Int = 10
-        val SOMETHING = ""
-        fun getOtherValue(): Int = 20
-        operator fun invoke() {
-
-        }
-    }
+    val logger = LogUtils.getLogger()
 
     @KDoc(
         """
@@ -101,7 +72,6 @@ class FabricBootstrap : ModInitializer {
         KotlinScriptInit.preInitialize()
         val instanceDir = File(System.getProperty("user.dir"))
         val sourcesDir = File(instanceDir, "kotlinsources")
-        val modsDir = File(instanceDir, "mods")
         if (!sourcesDir.exists() || !sourcesDir.isDirectory) {
             LogUtils.getLogger().warn("Kotlin sources folder not found at ${sourcesDir.absolutePath}")
             return
@@ -116,19 +86,20 @@ class FabricBootstrap : ModInitializer {
             val newSimpleName = if (currentCount > 0) obj.fullyQualifiedName else obj.simpleName
             obj.copy(simpleName = newSimpleName)
         }
-        //saveSuggestionsToJson(enrichedSuggestions, "kotlin_suggestions.json")
+        saveSuggestionsToJson(enrichedSuggestions, File(sourcesDir, "kotlin_suggestions.json").absolutePath)
+
         val l = listOf(
             /* "net.minecraft.world.entity.Entity",
              "net.minecraft.world.entity.LivingEntity",*/
             "net.liopyu.kotlinscript.FabricBootstrap",
             "net.liopyu.kotlinscript.util.ClassScanner"
         )
+
         val list = dumpClassesToFile(sourcesDir)
-        dumpClassesToFile(sourcesDir, list)
-        dumpCompanionObjectsToFile(sourcesDir, list)
-        //inspectClassDetails("org.jetbrains.kotlin.codegen.CommonVariableAsmNameManglingUtils")
-        //dumpClassesWithFernFlower(sourcesDir)
+        dumpClassesToFile(sourcesDir, list, "available_members.json")
+        dumpCompanionObjectsToFile(sourcesDir, list, "companion_objects.json")
     }
+
 
     fun extractKDocFromAnnotations(annotations: List<Annotation>): String? {
         return annotations
@@ -156,10 +127,8 @@ class FabricBootstrap : ModInitializer {
     }
 
 
-    fun dumpCompanionObjectsToFile(sourcesDir: File, filteredClasses: List<String>) {
-        // forceExportPackage()
-        val logger = LogUtils.getLogger()
-        val jsonOutputPath = File(sourcesDir, "companion_objects.json").apply {
+    fun dumpCompanionObjectsToFile(sourcesDir: File, filteredClasses: List<String>, fileName: String) {
+        val jsonOutputPath = File(sourcesDir, fileName).apply {
             parentFile.mkdirs()
         }
         val objectClassMethods = setOf("toString", "hashCode", "equals")
@@ -178,7 +147,6 @@ class FabricBootstrap : ModInitializer {
                         classInfo.constructorInfo.toString().contains("synthetic")
             }
             .forEach { clazz ->
-                val logger = LogUtils.getLogger()
                 val baseOuterName = clazz.name
                     .removeSuffix("\$Companion")
                     .substringBefore('$')
@@ -560,17 +528,11 @@ class FabricBootstrap : ModInitializer {
         }
     }
 
-
-    fun dumpClassesToFile(sourcesDir: File): List<String> {
-        val binOutputPath = File(sourcesDir, "available_classes.bin").apply {
+    fun dumpFilteredKotlinClassesToFile(sourcesDir: File, allowedPackages: List<String>): List<String> {
+        val binOutputPath = File(sourcesDir, "available_kotlin_classes.bin").apply {
             parentFile.mkdirs()
         }
-        val excludedPackages = listOf(
-            "java.lang", "java.io", "java.nio", "java.util.jar", "java.util.zip",
-            "java.net", "sun", "com.sun", "io.netty",
-            "org.objectweb.asm", "org.spongepowered.asm",
-            "org.openjdk.nashorn", "jdk.nashorn"
-        )
+
         val classList = CopyOnWriteArrayList<String>()
         val futures = ClassGraph()
             .enableClassInfo()
@@ -579,11 +541,10 @@ class FabricBootstrap : ModInitializer {
             .scan()
             .allClasses
             .filter { classInfo ->
-                classInfo.isPublic && !classInfo.name.matches(Regex(".*\\$\\d+")) && !excludedPackages.any {
-                    classInfo.name.startsWith(
-                        it
-                    )
-                }
+                val classPackage = classInfo.packageName
+                allowedPackages.any { allowed ->
+                    classPackage == allowed
+                } && classInfo.isPublic && !classInfo.name.matches(Regex(".*\\$\\d+"))
             }
             .map { clazz ->
                 if (clazz.hasAnnotation("kotlin.jvm.JvmName") || (clazz.name.startsWith("kotlin") && clazz.name.endsWith(
@@ -600,10 +561,161 @@ class FabricBootstrap : ModInitializer {
                     CompletableFuture.completedFuture(true)
                 }
             }
+
+        CompletableFuture.allOf(*futures.toTypedArray()).join()
+        binOutputPath.writeText(classList.joinToString("\n"))
+        LogUtils.getLogger().info("✅ Dumped ${classList.size} filtered Kotlin classes to ${binOutputPath.absolutePath}")
+        return classList
+    }
+
+    fun dumpClassesToFile(sourcesDir: File): List<String> {
+        val binOutputPath = File(sourcesDir, "available_classes.bin").apply {
+            parentFile.mkdirs()
+        }
+        val excludedPackages = listOf(
+            /*"java.lang",*/ "java.io", "java.nio", "java.util.jar", "java.util.zip",
+            "java.net", "sun", "com.sun", "io.netty",
+            "org.objectweb.asm", "org.spongepowered.asm",
+            "org.openjdk.nashorn", "jdk.nashorn"
+        )
+        val classList = CopyOnWriteArrayList<String>()
+        val futures = ClassGraph()
+            .enableClassInfo()
+            .enableSystemJarsAndModules()
+            .enableAnnotationInfo()
+            .scan()
+            .allClasses
+            .filter { classInfo ->
+                /*if (classInfo.name.startsWith("kotlin"))
+                    LogUtils.getLogger().info("Checking class: " + classInfo.name)*/
+                classInfo.isPublic && !classInfo.name.matches(Regex(".*\\$\\d+")) && !excludedPackages.any {
+                    classInfo.name.startsWith(
+                        it
+                    )
+                }
+            }
+            .map { clazz ->
+                if (clazz.hasAnnotation("kotlin.jvm.JvmName") || (clazz.name.startsWith("kotlin") && clazz.name.endsWith(
+                        "Kt"
+                    ))
+                ) {
+                    KotlinScriptInit.isValidImport(clazz.name, "import").thenAccept { isValidImport ->
+                        if (clazz.name.startsWith("kotlin.Any"))
+                            LogUtils.getLogger().info("Found any clazz: " + clazz.name)
+                        if (isValidImport) {
+                            classList.add(clazz.name)
+                        }
+                    }
+                } else {
+                    if (clazz.name.startsWith("kotlin.Any"))
+                        LogUtils.getLogger().info("Found any clazz: " + clazz.name)
+                    classList.add(clazz.name)
+                    CompletableFuture.completedFuture(true)
+                }
+            }
         CompletableFuture.allOf(*futures.toTypedArray()).join()
         binOutputPath.writeText(classList.joinToString("\n"))
         LogUtils.getLogger().info("✅ Dumped ${classList.size} importable classes to ${binOutputPath.absolutePath}")
         return classList
+    }
+
+    private val kotlinCorePackages = setOf(
+        "kotlin",
+        "kotlin.io",
+        "kotlin.text",
+        "kotlin.collections",
+        "kotlin.ranges",
+        "kotlin.sequences",
+        "kotlin.comparisons",
+        "kotlin.annotation"
+    )
+
+    private val coreKotlinTypeMap: Map<String, String> by lazy {
+        val classIndex = mutableMapOf<String, String>()
+        ClassGraph()
+            .enableClassInfo()
+            .scan()
+            .allClasses
+            .filter { classInfo ->
+                classInfo.packageName in kotlinCorePackages
+            }
+            .forEach { classInfo ->
+                classIndex[classInfo.simpleName] = classInfo.name
+
+                classInfo.innerClasses.forEach { inner ->
+                    val nestedFqName = "${classInfo.name}.${inner.simpleName}"
+                    classIndex[inner.simpleName] = nestedFqName
+                }
+            }
+        classIndex + mapOf(
+            "ByteArray" to "kotlin.ByteArray",
+            "ShortArray" to "kotlin.ShortArray",
+            "IntArray" to "kotlin.IntArray",
+            "LongArray" to "kotlin.LongArray",
+            "FloatArray" to "kotlin.FloatArray",
+            "DoubleArray" to "kotlin.DoubleArray",
+            "CharArray" to "kotlin.CharArray",
+            "BooleanArray" to "kotlin.BooleanArray"
+        )
+    }
+
+    private fun resolveReturnTypeFqName(
+        typeRef: KtTypeReference?,
+        file: KtFile,
+        currentPackage: String,
+        classLookup: Map<String, KotlinObject>
+    ): String {
+        val typeName = (typeRef?.typeElement as? KtUserType)?.referencedName ?: return "kotlin.Unit"
+        val imports = file.importDirectives
+            .filter { !it.isAllUnder }
+            .mapNotNull { directive ->
+                val fqName = directive.importedFqName?.asString()
+                if (fqName != null) {
+                    fqName.substringAfterLast('.') to fqName
+                } else null
+            }
+            .toMap()
+        val wildcardImports = file.importDirectives
+            .filter { it.isAllUnder }
+            .mapNotNull { it.importedFqName?.asString() }
+        if (typeName in imports) {
+            return imports[typeName]!!
+        }
+        for (pkg in wildcardImports) {
+            val candidate = "$pkg.$typeName"
+            val fromLookup = classLookup[typeName]
+            if (coreKotlinTypeMap[typeName] == candidate || (fromLookup != null && fromLookup.path == pkg)) {
+                return candidate
+            }
+            try {
+                val clazz = Class.forName(candidate)
+                if (clazz.`package`?.name == pkg) {
+                    return candidate
+                }
+            } catch (_: ClassNotFoundException) {
+            }
+        }
+        coreKotlinTypeMap[typeName]?.let {
+            return it
+        }
+        if (file.declarations.any { it is KtClassOrObject && it.name == typeName }) {
+            return "$currentPackage.$typeName"
+        }
+        classLookup[typeName]?.let { knownClass ->
+            val fq = "${knownClass.path}.$typeName"
+            return fq
+        }
+        if (typeName.length == 1 && typeName[0].isUpperCase()) {
+            return "RETURN"
+        }
+        val javaLangClassName = "java.lang.$typeName"
+        return try {
+            Class.forName(javaLangClassName)
+            javaLangClassName
+        } catch (e: ClassNotFoundException) {
+            val assumed = "$currentPackage.$typeName"
+            return assumed
+        }
     }
 
     fun extractTopLevelFunctions(sourcePath: String): List<KotlinObject> {
@@ -614,6 +726,8 @@ class FabricBootstrap : ModInitializer {
                 org.jetbrains.kotlin.cli.common.messages.MessageCollector.NONE
             )
             put(CommonConfigurationKeys.MODULE_NAME, "extraction")
+            put(JVMConfigurationKeys.RETAIN_OUTPUT_IN_MEMORY, true)
+            put(JVMConfigurationKeys.DO_NOT_CLEAR_BINDING_CONTEXT, true)
             addKotlinSourceRoot(sourcePath)
         }
         val environment = KotlinCoreEnvironment.createForProduction(
@@ -622,18 +736,16 @@ class FabricBootstrap : ModInitializer {
             EnvironmentConfigFiles.JVM_CONFIG_FILES
         )
         val ktFiles: List<KtFile> = environment.getSourceFiles()
-        val entities = mutableListOf<KotlinObject>()
-
-        val kotlinCorePackages = setOf(
-            "kotlin",
-            "kotlin.io",
-            "kotlin.text",
-            "kotlin.collections",
-            "kotlin.ranges",
-            "kotlin.sequences",
-            "kotlin.comparisons"
+        val trace = NoScopeRecordCliBindingTrace(environment.project)
+        val analysisResult = TopDownAnalyzerFacadeForJVM.analyzeFilesWithJavaIntegration(
+            environment.project,
+            ktFiles,
+            trace,
+            configuration,
+            environment::createPackagePartProvider
         )
-
+        val bindingContext = analysisResult.bindingContext
+        val entities = mutableListOf<KotlinObject>()
         for (file in ktFiles) {
             val pkg = file.packageFqName.asString()
             val sourceName = file.name.substringBeforeLast(".")
@@ -641,7 +753,6 @@ class FabricBootstrap : ModInitializer {
             file.declarations.filterIsInstance<KtClassOrObject>().forEach { classDeclaration ->
                 val className = classDeclaration.name ?: return@forEach
                 val fqName = if (pkg.isNotEmpty()) "$pkg.$className" else className
-
                 entities.add(
                     KotlinObject(
                         fullyQualifiedName = fqName,
@@ -651,37 +762,33 @@ class FabricBootstrap : ModInitializer {
                         path = pkg,
                         parentType = null,
                         requiresImport = pkg.isNotEmpty() && pkg !in kotlinCorePackages,
-                        isClass = true
+                        isClass = true,
+                        returnType = ""
                     )
                 )
             }
-
+            val classLookup = entities
+                .filter { it.isClass }
+                .associateBy { it.simpleName }
 
             file.declarations.filterIsInstance<KtNamedFunction>()
                 .filter { !it.hasModifier(KtTokens.PRIVATE_KEYWORD) }
                 .forEach { function ->
                     function.name?.let { name ->
-                        val receiverType = function.receiverTypeReference?.text
-                        val fqName =
-                            if (pkg == "kotlin" && receiverType != null && receiverType.matches(Regex("^[A-Z]$"))) {
-                                name
-                            } else {
-                                if (pkg.isNotEmpty()) "$pkg.$name" else name
-                            }
+                        val receiverType =
+                            resolveReturnTypeFqName(function.receiverTypeReference, file, pkg, classLookup)
+                        val fqName = if (pkg.isNotEmpty()) "$pkg.$name" else name
+
                         val type = when {
-                            function.hasModifier(KtTokens.INFIX_KEYWORD) &&
-                                    pkg == "kotlin" && fqName == name &&
-                                    receiverType != null && receiverType.matches(Regex("^[A-Z]$")) -> "infix_lambda"
-
+                            function.hasModifier(KtTokens.INFIX_KEYWORD) && receiverType == "RETURN" -> "infix_lambda"
                             function.hasModifier(KtTokens.INFIX_KEYWORD) -> "infix"
-                            pkg == "kotlin" && fqName == name &&
-                                    receiverType != null && receiverType.matches(Regex("^[A-Z]$")) -> "lambda"
-
+                            receiverType == "RETURN" -> "lambda"
                             function.valueParameters.isNotEmpty() -> "method"
                             else -> "property"
                         }
 
                         val requiresImport = pkg.isNotEmpty() && pkg !in kotlinCorePackages
+                        val returnType = resolveReturnTypeFqName(function.typeReference, file, pkg, classLookup)
 
                         entities.add(
                             KotlinObject(
@@ -692,22 +799,27 @@ class FabricBootstrap : ModInitializer {
                                 path = pkg,
                                 parentType = receiverType,
                                 requiresImport = requiresImport,
-                                isClass = false
+                                isClass = false,
+                                returnType = returnType
                             )
                         )
                     }
+
                 }
         }
-
         Disposer.dispose(disposable)
         return entities
     }
 
-    fun dumpClassesToFile(sourcesDir: File, targetClasses: List<String>) {
-        val jsonOutputPath = File(sourcesDir, "available_members.json").apply {
+
+    fun dumpClassesToFile(sourcesDir: File, targetClasses: List<String>, fileName: String) {
+        val jsonOutputPath = File(sourcesDir, fileName).apply {
             parentFile.mkdirs()
         }
-
+        val target = listOf(
+            "kotlin.Any",
+            "java.lang.Object"
+        )
         val objectClassMethods = setOf("toString", "hashCode", "equals")
         val classMap = mutableMapOf<String, MutableMap<String, Any>>()
 
@@ -722,14 +834,14 @@ class FabricBootstrap : ModInitializer {
             .filter { classInfo ->
                 val isCompanionObject = classInfo.name.endsWith("\$Companion") &&
                         classInfo.constructorInfo.toString().contains("synthetic")
-                return@filter classInfo.name in targetClasses && !isCompanionObject
+                return@filter (classInfo.name in targetClasses || classInfo.name in target) && !isCompanionObject
             }
             .forEach { clazz ->
                 val classEntry = mutableMapOf<String, Any>()
                 val isJavaLangObject = clazz.name == "java.lang.Object"
-                val isKotlinAny = clazz.name == "kotlin.Any"
 
                 val declaredMethodNames = clazz.methodInfo.map { it.name }.toSet()
+
                 clazz.methodInfo
                     .filter { method ->
                         method.isPublic &&
@@ -737,8 +849,7 @@ class FabricBootstrap : ModInitializer {
                                 method.name in declaredMethodNames &&
                                 (
                                         method.name !in objectClassMethods ||
-                                                isJavaLangObject ||
-                                                isKotlinAny
+                                                isJavaLangObject
                                         )
                     }
                     .forEach { method ->
@@ -770,11 +881,7 @@ class FabricBootstrap : ModInitializer {
                                         val filteredParams = member.parameters.dropWhile {
                                             it.kind == KParameter.Kind.INSTANCE || it.type.classifier == kclass
                                         }
-
-
-                                        /* LogUtils.getLogger()
-                                             .info("Function: ${member.name}, isOperator: ${member.isOperator}, filteredParamCount: ${filteredParams.size}")
-                                         */true
+                                        true
                                     }
                                 }.getOrElse {
                                     // Fallback: try to detect `invoke` manually from declared methods
@@ -828,6 +935,108 @@ class FabricBootstrap : ModInitializer {
         LogUtils.getLogger().info("✅ Dumped class data to ${jsonOutputPath.absolutePath}")
     }
 
+    fun dumpClassesToFile(
+        sourcesDir: File,
+        fileName: String,
+        includeKotlinTopLevelFunctions: Boolean
+    ): List<String> {
+        val jsonOutputPath = File(sourcesDir, fileName).apply {
+            parentFile.mkdirs()
+        }
+
+        val kotlinCorePackages = listOf(
+            "kotlin",
+            "kotlin.io",
+            "kotlin.text",
+            "kotlin.collections",
+            "kotlin.ranges",
+            "kotlin.sequences",
+            "kotlin.comparisons",
+            "kotlin.annotation"
+        )
+
+        val classList = mutableListOf<Map<String, Any>>()
+
+        val scanResult = ClassGraph()
+            .enableClassInfo()
+            .enableMethodInfo()
+            .enableSystemJarsAndModules()
+            .scan()
+
+        val allClasses = scanResult.allClasses
+
+        allClasses
+            .filter { classInfo ->
+                val nameContainsConsole = "ConsoleKt" in classInfo.name
+                val isPublic = classInfo.isPublic
+                val inCorePackage = kotlinCorePackages.contains(classInfo.packageName)
+                val isNotCompanion = !classInfo.name.endsWith("\$Companion")
+
+                if (nameContainsConsole) {
+                    println("✅ Found class: ${classInfo.name}")
+                    println("   ├─ isPublic: $isPublic")
+                    println("   ├─ inCorePackage: $inCorePackage (${classInfo.packageName})")
+                    println("   └─ isNotCompanion: $isNotCompanion")
+                }
+
+                isPublic && inCorePackage && isNotCompanion
+            }
+
+            .forEach { clazz ->
+                classList.add(
+                    mapOf(
+                        "name" to clazz.name,
+                        "isClass" to true
+                    )
+                )
+            }
+
+        if (includeKotlinTopLevelFunctions) {
+
+
+            allClasses
+                .filter { it.name.endsWith("Kt") && kotlinCorePackages.contains(it.packageName) }
+                .forEach { ktClass ->
+                    if ("Console" in ktClass.name) {
+                        println("🔍 Inspecting methods for: ${ktClass.name}")
+                        ktClass.methodInfo.forEach {
+                            println("   └─ method: ${it.name}")
+                            println("      ├─ modifiers: ${it.getModifiersStr()}")
+                            println("      ├─ isPublic: ${it.isPublic}")
+                            println("      ├─ isStatic: ${it.isStatic}")
+                            println("      ├─ isSynthetic: ${it.isSynthetic}")
+                            println("      ├─ isBridge: ${it.isBridge}")
+                            println("      └─ hasBody: ${it.hasBody()}")
+                        }
+
+                    }
+
+                    ktClass.methodInfo
+                        .filter { it.isPublic && !it.name.contains("$") }
+                        .map { method ->
+                            val fqName = "${ktClass.packageName}.${method.name}"
+                            println("🔹 Found top-level function: $fqName")
+                            mapOf(
+                                "name" to fqName,
+                                "isClass" to false
+                            )
+                        }
+                        .forEach { classList.add(it) }
+                }
+        }
+
+
+        val gson = GsonBuilder()
+            .setPrettyPrinting()
+            .disableHtmlEscaping()
+            .create()
+
+        jsonOutputPath.writeText(gson.toJson(classList))
+        LogUtils.getLogger().info("✅ Exported ${classList.size} entries to ${jsonOutputPath.absolutePath}")
+
+        return classList.map { it["name"].toString() }
+    }
+
 
     private fun isStaticConstant(field: FieldInfo): Boolean {
         val modifiers = field.modifiers
@@ -850,6 +1059,38 @@ class FabricBootstrap : ModInitializer {
         val file = File(outputPath)
         file.parentFile?.mkdirs()
         file.writeText(json)
+    }
+
+    operator fun invoke() {
+
+    }
+
+    companion object {
+        @KDoc(
+            """
+            Returns a greeting message.
+        
+            This method demonstrates a simple static function that returns a string based on an input parameter.
+        
+            ```kt
+            val message = FabricBootstrap.someStaticMethod(42)
+            println(message) // Hello from Companion Object!
+            ```
+        
+            @param something An integer that could modify behavior (currently unused).
+            @return A static greeting message.
+            """
+        )
+        fun someStaticMethod(something: Int): String = "Hello from Companion Object!"
+
+        private fun somePrivateStaticMethod(): String = "Hello from Companion Object!"
+        val someValue: Int = 10
+        private val somePrivateValue: Int = 10
+        val SOMETHING = ""
+        fun getOtherValue(): Int = 20
+        operator fun invoke() {
+
+        }
     }
 }
 

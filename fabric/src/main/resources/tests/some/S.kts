@@ -1,6 +1,1 @@
-package some
-class Test{
-    init {
-    }
-}
-
+kotlin.reflect.KClass
