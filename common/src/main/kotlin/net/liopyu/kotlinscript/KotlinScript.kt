@@ -23,8 +23,11 @@ object KotlinScriptInit {
     fun testKotlinSuggestions(suggestions: List<KotlinObject>): List<KotlinObject> = runBlocking {
         suggestions.map { suggestion ->
             async(Dispatchers.Default) {
+                val simpleName = suggestion.fullyQualifiedName
+                    .substringBefore('(')     // remove any (args)
+                    .substringAfterLast('.')  // get just the class name
                 if (isValidSuggestion(suggestion.fullyQualifiedName, suggestion.type) ||
-                    isValidSuggestion(suggestion.simpleName, suggestion.type) ||
+                    isValidSuggestion(simpleName, suggestion.type) ||
                     isValidSuggestion(suggestion.source, suggestion.type)
                 ) {
                     suggestion

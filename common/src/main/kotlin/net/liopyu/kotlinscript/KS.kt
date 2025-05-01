@@ -1,4 +1,5 @@
 package net.liopyu.kotlinscript
+
 import kotlin.script.experimental.api.*
 import kotlin.script.experimental.host.toScriptSource
 import kotlin.script.experimental.jvm.dependenciesFromCurrentContext
@@ -9,6 +10,7 @@ import kotlin.script.experimental.jvmhost.createJvmCompilationConfigurationFromT
 data class KS(val script: String) {
     val defaultImports = listOf(
         //Kotlin Packages
+        "net.liopyu.kotlinscript.EventHandlers",
         "kotlin.reflect.*",
         "kotlin.reflect.jvm.*",
         "org.apache.logging.log4j.Logger",
@@ -32,14 +34,15 @@ data class KS(val script: String) {
             )
         }
     }
+
     fun eval(): ResultWithDiagnostics<EvaluationResult> {
         val result = BasicJvmScriptingHost().eval(compile(), configuration, null)
         return result
     }
+
     private fun compile(): SourceCode {
         return script.toScriptSource()
     }
-
 
 
 }

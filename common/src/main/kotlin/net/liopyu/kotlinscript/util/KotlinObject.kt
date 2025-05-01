@@ -2,13 +2,12 @@ package net.liopyu.kotlinscript.util
 
 data class KotlinObject(
     val fullyQualifiedName: String,
-    val simpleName: String,
+    val args: List<String>,
     val source: String,
     val type: String,
     val path: String,
     val parentType: String? = null,
     val requiresImport: Boolean,
-    val isClass: Boolean,
     val returnType: String,
 )
 
