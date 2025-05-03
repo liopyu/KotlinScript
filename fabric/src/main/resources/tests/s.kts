@@ -176,4 +176,4 @@ kotlin.jvm.internal.PrimitiveSpreadBuilder<?>()
 fun main() {
     val instance = MyClass() // Calls companion's invoke()
 }
-kotlin.reflect.jvm.internal.impl.utils.SmartPrinter
+Boolean.TRUE

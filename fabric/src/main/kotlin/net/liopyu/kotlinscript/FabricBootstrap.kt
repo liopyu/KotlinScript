@@ -15,9 +15,11 @@ import org.jetbrains.kotlin.cli.jvm.compiler.EnvironmentConfigFiles
 import org.jetbrains.kotlin.cli.jvm.compiler.KotlinCoreEnvironment
 import org.jetbrains.kotlin.com.intellij.openapi.Disposable
 import org.jetbrains.kotlin.com.intellij.openapi.util.Disposer
+import org.jetbrains.kotlin.com.intellij.psi.tree.TokenSet
 import org.jetbrains.kotlin.config.CommonConfigurationKeys
 import org.jetbrains.kotlin.config.CompilerConfiguration
 import org.jetbrains.kotlin.config.JVMConfigurationKeys
+import org.jetbrains.kotlin.lexer.KtModifierKeywordToken
 import org.jetbrains.kotlin.lexer.KtTokens
 import org.jetbrains.kotlin.psi.*
 import org.jetbrains.kotlin.psi.psiUtil.isPrivate
@@ -38,10 +40,15 @@ import kotlin.reflect.full.functions
 import kotlin.reflect.full.memberProperties
 import kotlin.system.measureTimeMillis
 
+
 @Retention(AnnotationRetention.RUNTIME)
 annotation class KDoc(val value: String)
 class FabricBootstrap : ModInitializer {
+
     val logger = LogUtils.getLogger()
+
+    val instanceDir = File(System.getProperty("user.dir"))
+    val sourcesDir = File(instanceDir, "kotlinsources")
 
     @KDoc(
         """
@@ -69,8 +76,6 @@ class FabricBootstrap : ModInitializer {
     )
     override fun onInitialize() {
         KotlinScriptInit.preInitialize()
-        val instanceDir = File(System.getProperty("user.dir"))
-        val sourcesDir = File(instanceDir, "kotlinsources")
         if (!sourcesDir.exists() || !sourcesDir.isDirectory) {
             LogUtils.getLogger().warn("Kotlin sources folder not found at ${sourcesDir.absolutePath}")
             return
@@ -87,11 +92,11 @@ class FabricBootstrap : ModInitializer {
             val newFullyQualifiedName = if (currentCount > 0) obj.fullyQualifiedName else pureSimpleName
             obj.copy(
                 fullyQualifiedName = newFullyQualifiedName,
-                args = obj.args
             )
         }
         saveSuggestionsToJson(enrichedSuggestions, File(sourcesDir, "kotlin_suggestions.json").absolutePath)
         val l = listOf(
+            "net.liopyu.kotlinscript.SomethingFabric",
             "net.liopyu.kotlinscript.FabricBootstrap",
             "net.liopyu.kotlinscript.util.ClassScanner"
         )
@@ -588,7 +593,7 @@ class FabricBootstrap : ModInitializer {
             .filter { classInfo ->
                 /*if (classInfo.name.startsWith("kotlin"))
                     LogUtils.getLogger().info("Checking class: " + classInfo.name)*/
-                classInfo.isPublic && !classInfo.name.matches(Regex(".*\\$\\d+")) /*&& !excludedPackages.any {
+                /*classInfo.isPublic && */!classInfo.name.matches(Regex(".*\\$\\d+")) /*&& !excludedPackages.any {
                     classInfo.name.startsWith(
                         it
                     )
@@ -760,6 +765,38 @@ class FabricBootstrap : ModInitializer {
         }
     }
 
+    fun logModifiers(declaration: KtDeclaration) {
+        val modifiers = mutableListOf<String>()
+
+        val modifierTokens = TokenSet.andSet(KtTokens.MODIFIER_KEYWORDS, KtTokens.KEYWORDS).types
+            .filterIsInstance<KtModifierKeywordToken>()
+
+        declaration.modifierList?.let { list ->
+            for (token in modifierTokens) {
+                if (list.hasModifier(token)) {
+                    modifiers.add(token.value)
+                }
+            }
+        }
+
+        when (declaration) {
+            is KtNamedFunction -> modifiers.add("fun")
+            is KtProperty -> modifiers.add(if (declaration.isVar) "var" else "val")
+            is KtObjectDeclaration -> modifiers.add("object")
+            is KtClass -> {
+                if (declaration.isInterface()) {
+                    modifiers.add("interface")
+                } else {
+                    modifiers.add("class")
+                }
+            }
+
+            is KtEnumEntry -> modifiers.add("enum")
+        }
+
+        logger.info("Modifiers: ${modifiers.joinToString(" ")}")
+    }
+
     fun extractTopLevelFunctions(sourcePath: String): List<KotlinObject> {
         val disposable: Disposable = Disposer.newDisposable()
         val configuration = CompilerConfiguration().apply {
@@ -780,6 +817,7 @@ class FabricBootstrap : ModInitializer {
         val ktFiles: List<KtFile> = environment.getSourceFiles()
         val entities = mutableListOf<KotlinObject>()
         val classEntities = mutableListOf<KotlinObject>()
+        val tempClassEntities = mutableListOf<KotlinObject>()
         val classGraphNames = ClassGraph()
             .enableClassInfo()
             .scan()
@@ -791,14 +829,56 @@ class FabricBootstrap : ModInitializer {
             .associateBy {
                 it.fullyQualifiedName.substringAfterLast('.').substringBefore('(')
             }
+
         val coreKotlinTypeMapFromEntities = buildCoreKotlinTypeMap(classEntities)
         val finalCoreKotlinTypeMap = coreKotlinTypeMap + coreKotlinTypeMapFromEntities
         for (file in ktFiles) {
             val pkg = file.packageFqName.asString()
-            val sourceName = file.name.substringBeforeLast(".")
             file.declarations.filterIsInstance<KtClassOrObject>().filter { !it.isPrivate() }
                 .forEach { classDeclaration ->
                     val className = classDeclaration.name ?: return@forEach
+                    val fqName = if (pkg.isNotEmpty()) "$pkg.$className" else className
+                    tempClassEntities.add(
+                        KotlinObject(
+                            fullyQualifiedName = fqName,
+                            source = "",
+                            type = "class",
+                            path = pkg,
+                            parentType = "",
+                            requiresImport = pkg.isNotEmpty() && pkg !in kotlinCorePackages,
+                            returnType = ""
+                        )
+                    )
+                }
+        }
+        val fullClassLookup = tempClassEntities
+            .associateBy {
+                it.fullyQualifiedName.substringAfterLast('.').substringBefore('(')
+            }
+        val finalCoreKotlinTypeMap2 = coreKotlinTypeMap + buildCoreKotlinTypeMap(tempClassEntities)
+        for (file in ktFiles) {
+            val pkg = file.packageFqName.asString()
+            val sourceName = file.name.substringBeforeLast(".")
+            /*val ktFile = file as? KtFile
+            ktFile?.accept(object : KtTreeVisitorVoid() {
+                override fun visitNamedFunction(function: KtNamedFunction) {
+                    logModifiers(function)
+                }
+
+                override fun visitProperty(property: KtProperty) {
+                    logModifiers(property)
+                }
+
+                override fun visitClassOrObject(classOrObject: KtClassOrObject) {
+                    logModifiers(classOrObject)
+                }
+            })*/
+
+            file.declarations.filterIsInstance<KtClassOrObject>().filter { !it.isPrivate() }
+                .forEach { classDeclaration ->
+
+                    val className = classDeclaration.name ?: return@forEach
+                    if ("kotlin" != pkg) return@forEach
                     val fqName = if (pkg.isNotEmpty()) "$pkg.$className" else className
                     val primaryConstructor = classDeclaration.primaryConstructor
                     val visibility = primaryConstructor?.visibilityModifierType()
@@ -812,7 +892,13 @@ class FabricBootstrap : ModInitializer {
                             ?.map { param ->
                                 val paramTypeRef = param.typeReference
                                 if (paramTypeRef != null) {
-                                    resolveReturnTypeFqName(paramTypeRef, file, pkg, emptyMap(), emptyMap())
+                                    resolveReturnTypeFqName(
+                                        paramTypeRef,
+                                        file,
+                                        pkg,
+                                        fullClassLookup,
+                                        finalCoreKotlinTypeMap2
+                                    )
                                 } else {
                                     "Unknown"
                                 }
@@ -820,16 +906,85 @@ class FabricBootstrap : ModInitializer {
                     } else {
                         emptyList()
                     }
+                    val members = mutableListOf<KotlinObject>()
+                    for (declaration in classDeclaration.declarations) {
+                        when (declaration) {
+                            is KtNamedFunction -> {
+                                val memberName = declaration.name ?: continue
+                                val returnType = resolveReturnTypeFqName(
+                                    declaration.typeReference,
+                                    file,
+                                    pkg,
+                                    fullClassLookup,
+                                    finalCoreKotlinTypeMap2
+                                )
+                                val args = declaration.valueParameters.map { param ->
+                                    resolveReturnTypeFqName(
+                                        param.typeReference,
+                                        file,
+                                        pkg,
+                                        fullClassLookup,
+                                        finalCoreKotlinTypeMap2
+                                    )
+                                }
+
+                                val fullFqName = if (args.isEmpty()) "$fqName.$memberName"
+                                else "$fqName.$memberName(${args.joinToString(",")})"
+
+                                members.add(
+                                    KotlinObject(
+                                        fullyQualifiedName = fullFqName,
+                                        source = memberName,
+                                        type = if (declaration.hasModifier(KtTokens.OPERATOR_KEYWORD) && memberName == "invoke") "invoke" else "method",
+                                        path = pkg,
+                                        parentType = fqName,
+                                        requiresImport = false,
+                                        returnType = returnType
+                                    )
+                                )
+                            }
+
+                            is KtProperty -> {
+                                val memberName = declaration.name ?: continue
+                                val typeRef = declaration.typeReference
+                                val returnType =
+                                    resolveReturnTypeFqName(
+                                        typeRef,
+                                        file,
+                                        pkg,
+                                        fullClassLookup,
+                                        finalCoreKotlinTypeMap2
+                                    )
+
+                                members.add(
+                                    KotlinObject(
+                                        fullyQualifiedName = "$fqName.$memberName",
+                                        source = memberName,
+                                        type = "field",
+                                        path = pkg,
+                                        parentType = fqName,
+                                        requiresImport = false,
+                                        returnType = returnType
+                                    )
+                                )
+                            }
+
+                            is KtObjectDeclaration -> {
+                                // Optional: handle companion objects if needed
+                            }
+                        }
+                    }
+
                     classEntities.add(
                         KotlinObject(
                             fullyQualifiedName = fqName,
-                            args = constructorArgs,
                             source = sourceName,
                             type = "class",
                             path = pkg,
                             parentType = "",
                             requiresImport = pkg.isNotEmpty() && pkg !in kotlinCorePackages,
-                            returnType = ""
+                            returnType = "",
+                            members
                         )
                     )
                 }
@@ -841,6 +996,8 @@ class FabricBootstrap : ModInitializer {
                 .filter { !it.hasModifier(KtTokens.PRIVATE_KEYWORD) }
                 .forEach { function ->
                     function.name?.let { name ->
+                        if ("emptyList" in name)
+                            logger.info("found empty list: " + name)
                         val receiverType = resolveReturnTypeFqName(
                             function.receiverTypeReference,
                             file,
@@ -882,7 +1039,6 @@ class FabricBootstrap : ModInitializer {
                         entities.add(
                             KotlinObject(
                                 fullyQualifiedName = fullFqName,
-                                args = argsList,
                                 source = sourceName,
                                 type = type,
                                 path = pkg,
@@ -895,7 +1051,52 @@ class FabricBootstrap : ModInitializer {
                 }
         }
         Disposer.dispose(disposable)
+        val file = File(sourcesDir, "kotlin_members.json")
+        writeAvailableMembersJson(file, classEntities)
+
         return entities
+    }
+
+    enum class ModifierContext {
+        CLASS, METHOD, FIELD
+    }
+
+    fun formatModifiers(modifiers: Int, context: ModifierContext): String {
+        val parts = mutableListOf<String>()
+
+        // Handle visibility first (only one should be present)
+        when {
+            Modifier.isPublic(modifiers) -> parts.add("public")
+            Modifier.isProtected(modifiers) -> parts.add("protected")
+            Modifier.isPrivate(modifiers) -> parts.add("private")
+        }
+
+        when (context) {
+            ModifierContext.CLASS -> {
+                if (Modifier.isAbstract(modifiers)) parts.add("abstract")
+                if (Modifier.isFinal(modifiers)) parts.add("final")
+                if (Modifier.isInterface(modifiers)) parts.add("interface")
+                if (Modifier.isStrict(modifiers)) parts.add("strictfp")
+            }
+
+            ModifierContext.METHOD -> {
+                if (Modifier.isAbstract(modifiers)) parts.add("abstract")
+                if (Modifier.isFinal(modifiers)) parts.add("final")
+                if (Modifier.isStatic(modifiers)) parts.add("static")
+                if (Modifier.isSynchronized(modifiers)) parts.add("synchronized")
+                if (Modifier.isNative(modifiers)) parts.add("native")
+                if (Modifier.isStrict(modifiers)) parts.add("strictfp")
+            }
+
+            ModifierContext.FIELD -> {
+                if (Modifier.isStatic(modifiers)) parts.add("static")
+                if (Modifier.isFinal(modifiers)) parts.add("final")
+                if (Modifier.isTransient(modifiers)) parts.add("transient")
+                if (Modifier.isVolatile(modifiers)) parts.add("volatile")
+            }
+        }
+
+        return parts.joinToString(" ")
     }
 
     fun dumpClassesToFile(sourcesDir: File, targetClasses: List<String>, fileName: String) {
@@ -910,10 +1111,7 @@ class FabricBootstrap : ModInitializer {
         val classMap = mutableMapOf<String, MutableMap<String, Any>>()
 
         ClassGraph()
-            .enableClassInfo()
-            .enableMethodInfo()
-            .enableFieldInfo()
-            .enableAnnotationInfo()
+            .enableAllInfo()
             .enableSystemJarsAndModules()
             .scan()
             .allClasses
@@ -924,18 +1122,26 @@ class FabricBootstrap : ModInitializer {
             }
             .forEach { clazz ->
                 val classEntry = mutableMapOf<String, Any>()
-                val isJavaLangObject = clazz.name == "java.lang.Object"
+                val classModifiers = formatModifiers(
+                    clazz.modifiers,
+                    ModifierContext.CLASS
+                )
+                /*  logger.info("Clazz: ${clazz.name}, modifier: ${clazz.modifiersStr}")*/
 
-                val declaredMethodNames = clazz.methodInfo.map { it.name }.toSet()
-
+                val superclass = if (clazz.superclass != null) clazz.superclass.name else ""
+                classEntry["\$superclass"] = superclass
+                val interfaceNames = clazz.interfaces
+                    .map { it.name }
+                    .toTypedArray()
+                classEntry["\$interfaces"] = interfaceNames
+                classEntry["\$superclass"] = superclass
+                classEntry["\$modifiers"] = classModifiers
                 clazz.methodInfo
                     .filter { method ->
-                        method.isPublic &&
-                                !method.name.contains("$") &&
-                                method.name in declaredMethodNames &&
+                        /* method.isPublic &&*/
+                        !method.name.contains("$") &&
                                 (
-                                        method.name !in objectClassMethods ||
-                                                isJavaLangObject
+                                        method.name !in objectClassMethods
                                         )
                     }
                     .forEach { method ->
@@ -943,10 +1149,17 @@ class FabricBootstrap : ModInitializer {
                             .map { param -> param.typeSignatureOrTypeDescriptor.toString() }
                             .sorted()
 
+                        val modifiers = formatModifiers(
+                            method.modifiers,
+                            ModifierContext.METHOD
+                        )
+                        /*logger.info(
+                            "Method: " + method.name + ", modifier: " + method.modifiersStr
+                        )*/
                         val methodEntry = mutableMapOf<String, Any>()
-
+                        methodEntry["modifiers"] = modifiers
                         methodEntry["returns"] = method.typeSignatureOrTypeDescriptor?.resultType?.toString() ?: "Unit"
-                        methodEntry["isStatic"] = method.isStatic
+                        //methodEntry["isStatic"] = method.isStatic
                         val description = extractKDocFromAnnotations(method.annotationInfo)
 
                         if (!description.isNullOrBlank()) {
@@ -983,7 +1196,9 @@ class FabricBootstrap : ModInitializer {
                             } catch (e: Exception) {
                             }
                         }
-                        classEntry["${method.name}()"] = methodEntry
+                        classEntry["${method.name}(${args.joinToString(",")})"
+                        ] =
+                            methodEntry
                     }
 
                 // Extract fields
@@ -991,15 +1206,21 @@ class FabricBootstrap : ModInitializer {
 
                 clazz.fieldInfo
                     .filter { field ->
-                        return@filter field.isPublic &&
-                                !field.name.contains("$") &&
-                                field.name in declaredFieldNames &&
+                        return@filter !field.name.contains("$") &&
                                 (field.className == clazz.name)
                     }
                     .forEach { field ->
+                        val modifiers = formatModifiers(
+                            field.modifiers,
+                            ModifierContext.FIELD
+                        )
+                        /* logger.info(
+                             "Field: " + field.name + ", modifier: " + field.modifiersStr
+                         )*/
                         val fieldEntry = mutableMapOf<String, Any>()
+                        fieldEntry["modifiers"] = modifiers
                         fieldEntry["type"] = extractGenericType(field)
-                        fieldEntry["isStatic"] = field.isStatic
+                        // fieldEntry["isStatic"] = field.isStatic
                         val description = extractKDocFromAnnotations(field.annotationInfo)
 
                         if (!description.isNullOrBlank()) {
@@ -1010,14 +1231,11 @@ class FabricBootstrap : ModInitializer {
 
                 classMap[clazz.name] = classEntry
             }
-
         val gson = GsonBuilder()
             .setPrettyPrinting()
             .disableHtmlEscaping()
             .create()
-
         jsonOutputPath.writeText(gson.toJson(classMap))
-
         LogUtils.getLogger().info(" Dumped class data to ${jsonOutputPath.absolutePath}")
     }
 
@@ -1123,6 +1341,85 @@ class FabricBootstrap : ModInitializer {
         return classList.map { it["name"].toString() }
     }
 
+    fun splitGenericAware(input: String): List<String> {
+        val result = mutableListOf<String>()
+        val current = StringBuilder()
+        var depth = 0
+
+        for (char in input) {
+            when (char) {
+                '<' -> {
+                    depth++
+                    current.append(char)
+                }
+
+                '>' -> {
+                    depth--
+                    current.append(char)
+                }
+
+                ',' -> {
+                    if (depth == 0) {
+                        result.add(current.toString().trim())
+                        current.clear()
+                    } else {
+                        current.append(char)
+                    }
+                }
+
+                else -> current.append(char)
+            }
+        }
+
+        if (current.isNotEmpty()) {
+            result.add(current.toString().trim())
+        }
+
+        return result
+    }
+
+    fun writeAvailableMembersJson(
+        outputFile: File,
+        classEntities: List<KotlinObject>
+    ) {
+        val result = mutableMapOf<String, MutableMap<String, Any>>()
+
+        for (clazz in classEntities) {
+            val className = clazz.fullyQualifiedName
+
+            val members = mutableMapOf<String, Any>()
+            val classMembers = clazz.members
+
+            for (member in classMembers) {
+                val argsString = Regex("""\((.*)\)""").find(member.fullyQualifiedName)?.groupValues?.get(1)
+                val args = argsString?.takeIf { it.isNotEmpty() }?.let { splitGenericAware(it) } ?: emptyList()
+
+
+                val memberName = if (args.isNotEmpty()) {
+                    "${member.source}(${args.joinToString(",")})"
+                } else {
+                    member.source + "()"
+                }
+
+                val entry = mutableMapOf<String, Any>(
+                    "returns" to member.returnType,
+                    "isStatic" to false
+                )
+                if (!args.isNullOrEmpty()) entry["args"] = args
+                if (member.type == "invoke") entry["isInvokeOperator"] = true
+
+                members[memberName] = entry
+            }
+
+            if (members.isNotEmpty()) {
+                result[className] = members
+            }
+        }
+
+        val gson = GsonBuilder().disableHtmlEscaping().setPrettyPrinting().create()
+        outputFile.parentFile?.mkdirs()
+        outputFile.writeText(gson.toJson(result))
+    }
 
     private fun isStaticConstant(field: FieldInfo): Boolean {
         val modifiers = field.modifiers

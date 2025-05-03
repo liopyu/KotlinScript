@@ -2,21 +2,15 @@ package net.liopyu.kotlinscript.util
 
 data class KotlinObject(
     val fullyQualifiedName: String,
-    val args: List<String>,
     val source: String,
     val type: String,
     val path: String,
     val parentType: String? = null,
     val requiresImport: Boolean,
     val returnType: String,
+    val members: MutableList<KotlinObject> = mutableListOf()
 )
 
-data class ClassEntry(
-    val extends: List<String> = emptyList(),
-    val implements: List<String> = emptyList(),
-    val methods: MutableList<MethodEntry> = mutableListOf(),
-    val fields: MutableList<FieldEntry> = mutableListOf()
-)
 
 data class MethodEntry(
     val name: String,
