@@ -41,14 +41,154 @@ import kotlin.reflect.full.memberProperties
 import kotlin.system.measureTimeMillis
 
 
+@Target(AnnotationTarget.VALUE_PARAMETER)
+annotation class Deprecated
+
+@Target(AnnotationTarget.VALUE_PARAMETER)
+annotation class MyAnno(val description: String)
+
+@Target(AnnotationTarget.VALUE_PARAMETER)
+annotation class NotEmpty
+
+@Target(AnnotationTarget.VALUE_PARAMETER)
+annotation class Size(val max: Int)
+
+@Target(AnnotationTarget.VALUE_PARAMETER)
+annotation class Tag(val value: Array<String>)
+
+@Target(AnnotationTarget.VALUE_PARAMETER)
+annotation class SuppressWarnings(vararg val value: String)
+
+@Target(AnnotationTarget.VALUE_PARAMETER)
+annotation class Named(val value: String)
+
+
+@Target(AnnotationTarget.VALUE_PARAMETER)
+annotation class AnnotationWithDefault(val value: String = "", val flag: Boolean = false)
+
+@Target(AnnotationTarget.VALUE_PARAMETER)
+annotation class JsonProperty(val required: Boolean)
+
+
+val logger = LogUtils.getLogger()
+
+val instanceDir = File(System.getProperty("user.dir"))
+val sourcesDir = File(instanceDir, "kotlinsources")
+
+fun main() {
+    val otherFile = File(sourcesDir, "mappings.tiny")
+    val mappingsFile = File.createTempFile("mappings", ".tiny").apply {
+        outputStream().use { out ->
+            otherFile.inputStream().use { input ->
+                input.copyTo(out)
+            }
+        }
+        deleteOnExit()
+    }
+    tinyToJson(mappingsFile)
+    println(resolveClassName("net.minecraft.class_310")) // → com.mojang.math.Axis
+    println(resolveFieldName("field_35642"))              // → REMOTE_ADDRESS
+    println(resolveMethodName("method_39494"))            // → commitEvent
+
+}
+
+val runtimeTinyMappings: MutableMap<String, MutableMap<String, Any>> = mutableMapOf()
+val fieldIndex: MutableMap<String, String> = mutableMapOf()
+val methodIndex: MutableMap<String, String> = mutableMapOf()
+val fieldIndexBuckets: MutableMap<Int, MutableMap<Int, MutableMap<String, String>>> = mutableMapOf()
+val methodIndexBuckets: MutableMap<Int, MutableMap<Int, MutableMap<String, String>>> = mutableMapOf()
+
+fun resolveClassName(obfClass: String): String? {
+    return runtimeTinyMappings[obfClass]
+        ?.get("deobf")
+        ?.toString()
+        ?.replace('/', '.')
+}
+
+fun resolveFieldName(obfField: String): String? {
+    return fieldIndex[obfField] ?: run {
+        fieldIndexBuckets[
+            obfField.substringAfter('_').toIntOrNull()?.div(1000) ?: return null
+        ]?.get(
+            (obfField.substringAfter('_').toIntOrNull()?.div(10))?.rem(100) ?: return null
+        )?.get(obfField)
+    }
+}
+
+fun resolveMethodName(obfMethod: String): String? {
+    return methodIndex[obfMethod] ?: run {
+        methodIndexBuckets[
+            obfMethod.substringAfter('_').toIntOrNull()?.div(1000) ?: return null
+        ]?.get(
+            (obfMethod.substringAfter('_').toIntOrNull()?.div(10))?.rem(100) ?: return null
+        )?.get(obfMethod)
+    }
+}
+
+
+fun tinyToJson(inputFile: File) {
+    var currentClass: String? = null
+
+    inputFile.forEachLine { rawLine ->
+        val line = rawLine.trimEnd()
+        if (line.isEmpty()) return@forEachLine
+
+        val tokens = line.split("\t")
+        val keyword = tokens.firstOrNull { it.isNotBlank() } ?: return@forEachLine
+
+        when (keyword) {
+            "c" -> if (tokens.size >= 4) {
+                val obfName = tokens[2].replace('/', '.')
+                val deobfName = tokens[3]
+                currentClass = obfName
+                runtimeTinyMappings[currentClass!!] = mutableMapOf(
+                    "deobf" to deobfName,
+                    "methods" to mutableMapOf<String, String>(),
+                    "fields" to mutableMapOf<String, String>()
+                )
+            }
+
+            "f" -> if (tokens.size >= 6 && currentClass != null) {
+                val obfField = tokens[4]
+                val deobfField = tokens[5]
+                val fields = runtimeTinyMappings[currentClass]?.get("fields") as MutableMap<String, String>
+                fields[obfField] = deobfField
+                fieldIndex[obfField] = deobfField
+
+                val num = obfField.substringAfter('_').toIntOrNull()
+                if (num != null) {
+                    val tens = num / 1000
+                    val ones = (num / 10) % 100
+                    val tier1 = fieldIndexBuckets.getOrPut(tens) { mutableMapOf() }
+                    val tier2 = tier1.getOrPut(ones) { mutableMapOf() }
+                    tier2[obfField] = deobfField
+                }
+            }
+
+            "m" -> if (tokens.size >= 6 && currentClass != null) {
+                val obfMethod = tokens[4]
+                val deobfMethod = tokens[5]
+                val methods = runtimeTinyMappings[currentClass]?.get("methods") as MutableMap<String, String>
+                methods[obfMethod] = deobfMethod
+                methodIndex[obfMethod] = deobfMethod
+
+                val num = obfMethod.substringAfter('_').toIntOrNull()
+                if (num != null) {
+                    val tens = num / 1000
+                    val ones = (num / 10) % 100
+                    val tier1 = methodIndexBuckets.getOrPut(tens) { mutableMapOf() }
+                    val tier2 = tier1.getOrPut(ones) { mutableMapOf() }
+                    tier2[obfMethod] = deobfMethod
+                }
+            }
+        }
+    }
+}
+
 @Retention(AnnotationRetention.RUNTIME)
 annotation class KDoc(val value: String)
 class FabricBootstrap : ModInitializer {
 
-    val logger = LogUtils.getLogger()
-
-    val instanceDir = File(System.getProperty("user.dir"))
-    val sourcesDir = File(instanceDir, "kotlinsources")
 
     @KDoc(
         """
@@ -76,33 +216,50 @@ class FabricBootstrap : ModInitializer {
     )
     override fun onInitialize() {
         KotlinScriptInit.preInitialize()
-        if (!sourcesDir.exists() || !sourcesDir.isDirectory) {
-            LogUtils.getLogger().warn("Kotlin sources folder not found at ${sourcesDir.absolutePath}")
+        if (!sourcesDir.exists()) {
+            LogUtils.getLogger()
+                .warn("Kotlin sources folder not found at ${sourcesDir.absolutePath}, creating it now...")
+            sourcesDir.mkdirs()
+        }
+
+        if (!sourcesDir.isDirectory) {
+            LogUtils.getLogger().error("Failed to create Kotlin sources directory at ${sourcesDir.absolutePath}")
             return
         }
-        val functions = extractTopLevelFunctions(sourcesDir.absolutePath)
-        val uniqueFunctions = functions.distinctBy { it.fullyQualifiedName }
-        val occurrenceMap = mutableMapOf<String, Int>()
-        val enrichedSuggestions = uniqueFunctions.map { obj ->
-            val pureSimpleName = obj.fullyQualifiedName
-                .substringBefore('(')
-                .substringAfterLast('.')
-            val currentCount = occurrenceMap.getOrDefault(pureSimpleName, 0)
-            occurrenceMap[pureSimpleName] = currentCount + 1
-            val newFullyQualifiedName = if (currentCount > 0) obj.fullyQualifiedName else pureSimpleName
-            obj.copy(
-                fullyQualifiedName = newFullyQualifiedName,
-            )
-        }
-        saveSuggestionsToJson(enrichedSuggestions, File(sourcesDir, "kotlin_suggestions.json").absolutePath)
+        /* val functions = extractTopLevelFunctions(sourcesDir.absolutePath)
+         val uniqueFunctions = functions.distinctBy { it.fullyQualifiedName }
+         val occurrenceMap = mutableMapOf<String, Int>()
+         val enrichedSuggestions = uniqueFunctions.map { obj ->
+             val pureSimpleName = obj.fullyQualifiedName
+                 .substringBefore('(')
+                 .substringAfterLast('.')
+             val currentCount = occurrenceMap.getOrDefault(pureSimpleName, 0)
+             occurrenceMap[pureSimpleName] = currentCount + 1
+             val newFullyQualifiedName = if (currentCount > 0) obj.fullyQualifiedName else pureSimpleName
+             obj.copy(
+                 fullyQualifiedName = newFullyQualifiedName,
+             )
+         }
+         saveSuggestionsToJson(enrichedSuggestions, File(sourcesDir, "kotlin_suggestions.json").absolutePath)
+        */
         val l = listOf(
-            "net.liopyu.kotlinscript.SomethingFabric",
-            "net.liopyu.kotlinscript.FabricBootstrap",
-            "net.liopyu.kotlinscript.util.ClassScanner"
+            "net.liopyu.kotlinscript.Utils",
         )
-        val list = dumpClassesToFile(sourcesDir)
+
+        /*val resourceStream = object {}.javaClass.getResourceAsStream("/mappings/mappings.tiny")
+            ?: error("mappings.tiny not found in mod resources")
+        val mappingsFile = File.createTempFile("mappings", ".tiny").apply {
+            outputStream().use { out ->
+                resourceStream.use { input ->
+                    input.copyTo(out)
+                }
+            }
+            deleteOnExit()
+        }
+        tinyToJson(mappingsFile)*/
+        val list = l//dumpClassesToFile(sourcesDir)
         dumpClassesToFile(sourcesDir, list, "available_members.json")
-        dumpCompanionObjectsToFile(sourcesDir, list, "companion_objects.json")
+        //dumpCompanionObjectsToFile(sourcesDir, list, "companion_objects.json")
     }
 
 
@@ -147,12 +304,14 @@ class FabricBootstrap : ModInitializer {
             .scan()
         scanResult.allClasses
             .filter { classInfo ->
-                classInfo.name in filteredClasses &&
-                        classInfo.name.endsWith("\$Companion") &&
+                val deobf = resolveClassName(classInfo.name) ?: classInfo.name
+                deobf in filteredClasses &&
+                        deobf.endsWith("\$Companion") &&
                         classInfo.constructorInfo.toString().contains("synthetic")
             }
             .forEach { clazz ->
-                val baseOuterName = clazz.name
+                val deobf = resolveClassName(clazz.name) ?: clazz.name
+                val baseOuterName = deobf
                     .removeSuffix("\$Companion")
                     .substringBefore('$')
                 val outerClass = scanResult.getClassInfo(baseOuterName)
@@ -166,21 +325,29 @@ class FabricBootstrap : ModInitializer {
 
                     // Safely inspect functions
                     someClass.kotlin.functions
-                        .filter { it.visibility == KVisibility.PUBLIC && it.name !in objectClassMethods }
+                        .filter {
+                            it.visibility == KVisibility.PUBLIC && (resolveMethodName(it.name)
+                                ?: it.name) !in objectClassMethods
+                        }
                         .forEach { method ->
-                            val methodName = method.name
-                            val returnType = method.returnType.toString()
+                            val methodName = resolveMethodName(method.name) ?: method.name
+                            val returnType = deepResolveType(method.returnType.toString())
+
                             val methodEntry = mutableMapOf<String, Any>()
-                            val isOperator = method.name == "invoke" &&
+
+                            val isOperator = resolveMethodName(method.name) == "invoke" &&
                                     method.parameters.count { it.kind == KParameter.Kind.VALUE } == 0 &&
                                     method.isOperator
+
                             if (isOperator) {
                                 methodEntry["isInvokeOperator"] = true
                             }
+
                             methodEntry["returns"] = returnType
+
                             val filteredParams = if (
                                 method.parameters.isNotEmpty() &&
-                                method.parameters.first().type.toString() == someClass.kotlin.qualifiedName
+                                deepResolveType(method.parameters.first().type.toString()) == someClass.kotlin.qualifiedName
                             ) {
                                 method.parameters.drop(1)
                             } else {
@@ -188,38 +355,42 @@ class FabricBootstrap : ModInitializer {
                             }
 
                             if (filteredParams.isNotEmpty()) {
-                                methodEntry["args"] = filteredParams.map { it.type.toString() }
+                                methodEntry["args"] = filteredParams.map { deepResolveType(it.type.toString()) }
                             }
-                            val description = extractKDocFromAnnotations(method.annotations)
 
+                            val description = extractKDocFromAnnotations(method.annotations)
                             if (!description.isNullOrBlank()) {
                                 methodEntry["description"] = description
                             }
 
-
-                            companionEntry[("$methodName()")] = methodEntry
+                            companionEntry["$methodName()"] = methodEntry
                         }
+
 
                     // Safely inspect properties
                     someClass.kotlin.memberProperties
                         .filter { it.visibility == KVisibility.PUBLIC }
                         .forEach { field ->
                             val fieldEntry = mutableMapOf<String, Any>()
-                            fieldEntry["type"] = field.returnType.toString()
-                            companionEntry[field.name] = fieldEntry
-                            val description = extractKDocFromAnnotations(field.annotations)
 
+                            val resolvedFieldName = resolveFieldName(field.name) ?: field.name
+                            val resolvedType = deepResolveType(field.returnType.toString())
+
+                            fieldEntry["type"] = resolvedType
+                            companionEntry[resolvedFieldName] = fieldEntry
+
+                            val description = extractKDocFromAnnotations(field.annotations)
                             if (!description.isNullOrBlank()) {
                                 fieldEntry["description"] = description
                             }
-
                         }
 
+
                     if (companionEntry.isNotEmpty()) {
-                        companionMap[clazz.name.removeSuffix("\$Companion")] = companionEntry
+                        companionMap[deobf.removeSuffix("\$Companion")] = companionEntry
                     }
                 } catch (e: Throwable) {
-                    logger.warn("⚠️ Skipped class due to error (${clazz.name}): ${e::class.simpleName}: ${e.message}")
+                    logger.warn("⚠️ Skipped class due to error (${deobf}): ${e::class.simpleName}: ${e.message}")
                 }
             }
 
@@ -573,56 +744,85 @@ class FabricBootstrap : ModInitializer {
         return classList
     }
 
+    fun loadMappings(
+        file: File,
+        fromNamespace: String = "official",
+        toNamespace: String = "named"
+    ): Map<String, String> {
+        val mappings = mutableMapOf<String, String>()
+        var namespaceOrder: List<String> = emptyList()
+        file.useLines { lines ->
+            for (line in lines) {
+                val parts = line.split('\t')
+
+                if (parts[0] == "tiny") {
+                    namespaceOrder = parts.drop(3)
+                    continue
+                }
+
+                if (parts[0] == "c") {
+                    val intermediary = parts.getOrNull(1)?.replace('/', '.')
+                    val official = parts.getOrNull(2)?.replace('/', '.')
+                    val named = parts.getOrNull(3)?.replace('/', '.')
+
+                    val map = mapOf(
+                        "intermediary" to intermediary,
+                        "official" to official,
+                        "named" to named
+                    )
+
+                    val from = map[fromNamespace]
+                    val to = map[toNamespace]
+
+                    if (!from.isNullOrEmpty() && !to.isNullOrEmpty()) {
+                        mappings[from] = to
+                    }
+                }
+            }
+        }
+
+        return mappings
+    }
+
     fun dumpClassesToFile(sourcesDir: File): List<String> {
         val binOutputPath = File(sourcesDir, "available_classes.bin").apply {
             parentFile.mkdirs()
         }
-        val excludedPackages = listOf(
-            "java.lang", "java.io", "java.nio", "java.util.jar", "java.util.zip",
-            "java.net", "sun", "com.sun", "io.netty",
-            "org.objectweb.asm", "org.spongepowered.asm",
-            "org.openjdk.nashorn", "jdk.nashorn"
-        )
+
         val classList = CopyOnWriteArrayList<String>()
         val futures = ClassGraph()
-            .enableClassInfo()
+            .enableAllInfo()
             .enableSystemJarsAndModules()
-            .enableAnnotationInfo()
             .scan()
             .allClasses
-            .filter { classInfo ->
-                /*if (classInfo.name.startsWith("kotlin"))
-                    LogUtils.getLogger().info("Checking class: " + classInfo.name)*/
-                /*classInfo.isPublic && */!classInfo.name.matches(Regex(".*\\$\\d+")) /*&& !excludedPackages.any {
-                    classInfo.name.startsWith(
-                        it
-                    )
-                }*/
+            .filter {
+                val resolvedName = resolveClassName(it.name) ?: it.name
+                !resolvedName.matches(Regex(".*\\$\\d+"))/*it.name.startsWith("net.minecraft")*/
             }
             .map { clazz ->
-                if (clazz.hasAnnotation("kotlin.jvm.JvmName") || (clazz.name.startsWith("kotlin") && clazz.name.endsWith(
+                val originalName = clazz.name
+                val resolvedName = resolveClassName(originalName) ?: originalName
+                if (clazz.hasAnnotation("kotlin.jvm.JvmName") || (originalName.startsWith("kotlin") && originalName.endsWith(
                         "Kt"
                     ))
                 ) {
-                    KotlinScriptInit.isValidImport(clazz.name, "import").thenAccept { isValidImport ->
-                        if (clazz.name.startsWith("kotlin.Any"))
-                            LogUtils.getLogger().info("Found any clazz: " + clazz.name)
+                    KotlinScriptInit.isValidImport(resolvedName, "import").thenAccept { isValidImport ->
                         if (isValidImport) {
-                            classList.add(clazz.name)
+                            classList.add(resolvedName)
                         }
                     }
                 } else {
-                    if (clazz.name.startsWith("kotlin.Any"))
-                        LogUtils.getLogger().info("Found any clazz: " + clazz.name)
-                    classList.add(clazz.name)
+                    classList.add(resolvedName)
                     CompletableFuture.completedFuture(true)
                 }
             }
+
         CompletableFuture.allOf(*futures.toTypedArray()).join()
         binOutputPath.writeText(classList.joinToString("\n"))
-        LogUtils.getLogger().info(" Dumped ${classList.size} importable classes to ${binOutputPath.absolutePath}")
+        LogUtils.getLogger().info("Dumped ${classList.size} importable classes to ${binOutputPath.absolutePath}")
         return classList
     }
+
 
     private val kotlinCorePackages = setOf(
         "kotlin",
@@ -859,24 +1059,8 @@ class FabricBootstrap : ModInitializer {
         for (file in ktFiles) {
             val pkg = file.packageFqName.asString()
             val sourceName = file.name.substringBeforeLast(".")
-            /*val ktFile = file as? KtFile
-            ktFile?.accept(object : KtTreeVisitorVoid() {
-                override fun visitNamedFunction(function: KtNamedFunction) {
-                    logModifiers(function)
-                }
-
-                override fun visitProperty(property: KtProperty) {
-                    logModifiers(property)
-                }
-
-                override fun visitClassOrObject(classOrObject: KtClassOrObject) {
-                    logModifiers(classOrObject)
-                }
-            })*/
-
             file.declarations.filterIsInstance<KtClassOrObject>().filter { !it.isPrivate() }
                 .forEach { classDeclaration ->
-
                     val className = classDeclaration.name ?: return@forEach
                     if ("kotlin" != pkg) return@forEach
                     val fqName = if (pkg.isNotEmpty()) "$pkg.$className" else className
@@ -974,6 +1158,33 @@ class FabricBootstrap : ModInitializer {
                             }
                         }
                     }
+                    val typeParams = classDeclaration.typeParameterList
+                        ?.parameters
+                        ?.map { param ->
+                            val name = param.name ?: return@map null
+                            val extendsBound = param.extendsBound?.text?.takeIf { it != "Any" }
+                            if (extendsBound != null) "$name : $extendsBound" else name
+                        }
+                        ?.filterNotNull()
+                        ?: emptyList()
+                    val allKotlinTokens = listOf(
+                        KtTokens.PUBLIC_KEYWORD, KtTokens.PRIVATE_KEYWORD, KtTokens.PROTECTED_KEYWORD,
+                        KtTokens.ABSTRACT_KEYWORD, KtTokens.FINAL_KEYWORD, KtTokens.OPEN_KEYWORD,
+                        KtTokens.SEALED_KEYWORD, KtTokens.ENUM_KEYWORD, KtTokens.DATA_KEYWORD,
+                        KtTokens.ANNOTATION_KEYWORD, KtTokens.INNER_KEYWORD, KtTokens.EXTERNAL_KEYWORD,
+                        KtTokens.CONST_KEYWORD, KtTokens.LATEINIT_KEYWORD,
+                        KtTokens.SUSPEND_KEYWORD, KtTokens.TAILREC_KEYWORD, KtTokens.OPERATOR_KEYWORD,
+                        KtTokens.INFIX_KEYWORD, KtTokens.NOINLINE_KEYWORD, KtTokens.CROSSINLINE_KEYWORD,
+                        KtTokens.REIFIED_KEYWORD, KtTokens.EXPECT_KEYWORD, KtTokens.ACTUAL_KEYWORD,
+                        KtTokens.HEADER_KEYWORD, KtTokens.IMPL_KEYWORD, KtTokens.FUN_KEYWORD
+                    )
+
+                    val kotlinMods = allKotlinTokens
+                        .filter { classDeclaration.hasModifier(it) }
+                        .map { it.value }
+
+                    val javaMods = convertKotlinModifiersToJava(kotlinMods, ModifierContext.CLASS)
+
 
                     classEntities.add(
                         KotlinObject(
@@ -984,7 +1195,9 @@ class FabricBootstrap : ModInitializer {
                             parentType = "",
                             requiresImport = pkg.isNotEmpty() && pkg !in kotlinCorePackages,
                             returnType = "",
-                            members
+                            members,
+                            typeParameters = typeParams,
+                            modifiers = javaMods
                         )
                     )
                 }
@@ -1035,7 +1248,6 @@ class FabricBootstrap : ModInitializer {
                             classLookup,
                             finalCoreKotlinTypeMap
                         )
-                        val argsList = parameterTypes
                         entities.add(
                             KotlinObject(
                                 fullyQualifiedName = fullFqName,
@@ -1099,17 +1311,200 @@ class FabricBootstrap : ModInitializer {
         return parts.joinToString(" ")
     }
 
+    fun convertKotlinModifiersToJava(kotlinModifiers: List<String>, context: ModifierContext): List<String> {
+        val mapped = mutableListOf<String>()
+
+        for (mod in kotlinModifiers) {
+            when (mod) {
+                "public", "private", "protected" -> mapped.add(mod)
+
+                "abstract" -> if (context != ModifierContext.FIELD) mapped.add("abstract")
+                "final" -> if (context != ModifierContext.METHOD || !mapped.contains("abstract")) mapped.add("final")
+                "open" -> {} // No direct equivalent, ignore
+                "sealed" -> mapped.add("sealed") // No Java equivalent, kept as-is
+                "enum" -> mapped.add("enum")
+                "annotation" -> mapped.add("annotation")
+                "static" -> mapped.add("static")
+                "native" -> mapped.add("native")
+                "strictfp" -> mapped.add("strictfp")
+                "synchronized" -> if (context == ModifierContext.METHOD) mapped.add("synchronized")
+                "transient" -> if (context == ModifierContext.FIELD) mapped.add("transient")
+                "volatile" -> if (context == ModifierContext.FIELD) mapped.add("volatile")
+
+                else -> mapped.add(mod) // fallback for "data", "inline", "suspend", etc.
+            }
+        }
+
+        return mapped
+    }
+
+
+    fun deepResolveType(type: String): String {
+        val pattern = Regex("""[\w.$/]+(?:\$[\w$]+)?""") // matches nested and inner class names
+        return pattern.replace(type) { match ->
+            resolveClassName(match.value) ?: match.value
+        }
+    }
+
     fun dumpClassesToFile(sourcesDir: File, targetClasses: List<String>, fileName: String) {
+        val jsonOutputPath = File(sourcesDir, fileName).apply { parentFile.mkdirs() }
+        val objectClassMethods = setOf("toString", "hashCode", "equals")
+        val classMap = mutableMapOf<String, MutableMap<String, Any>>()
+        val excludedPackages = listOf(
+            "java.util.jar", "java.util.zip", "java.net", "sun", "com.sun", "io.netty",
+            "org.objectweb.asm", "org.spongepowered.asm", "org.openjdk.nashorn", "jdk.nashorn"
+        )
+
+        try {
+            ClassGraph()
+                .enableAllInfo()
+                .enableSystemJarsAndModules()
+                .scan()
+                .allClasses
+                .filter { classInfo ->
+                    val actualClassName = resolveClassName(classInfo.name) ?: classInfo.name
+                    val isCompanion = actualClassName.endsWith("\$Companion") &&
+                            classInfo.constructorInfo.toString().contains("synthetic")
+                    actualClassName in targetClasses &&
+                            !isCompanion &&
+                            !excludedPackages.any { actualClassName.startsWith(it) }
+                }
+
+                .forEach { clazz ->
+                    val deobfClassName = resolveClassName(clazz.name) ?: clazz.name
+                    val classEntry = mutableMapOf<String, Any>()
+
+                    val resolvedSuperclass = clazz.superclass?.name?.let { resolveClassName(it) ?: it } ?: ""
+                    classEntry["\$superclass"] = resolvedSuperclass
+
+                    val resolvedInterfaces =
+                        clazz.interfaces.map { resolveClassName(it.name) ?: it.name }.toTypedArray()
+                    classEntry["\$interfaces"] = resolvedInterfaces
+
+                    val classModifiers = formatModifiers(clazz.modifiers, ModifierContext.CLASS)
+                    classEntry["\$modifiers"] = classModifiers
+                    val genericParams = clazz.typeSignatureOrTypeDescriptor?.typeParameters
+                    if (!genericParams.isNullOrEmpty()) {
+                        classEntry["\$typeParameters"] = genericParams.map { param ->
+                            val allBounds = buildList {
+                                param.classBound?.let { add(it) }
+                                param.interfaceBounds?.let { addAll(it) }
+                            }
+
+                            val resolvedBounds = allBounds
+                                .map {
+                                    val raw = it.toString()
+                                    val cleaned = raw.replace(Regex("^@[^\\s]+\\s*\\(.*?\\)?\\s*"), "")
+                                    deepResolveType(cleaned)
+                                }
+                                .filter { it != "java.lang.Object" }
+
+                            if (resolvedBounds.isEmpty()) {
+                                param.name
+                            } else {
+                                "${param.name} : ${resolvedBounds.joinToString(" & ")}"
+                            }
+                        }
+                    }
+
+                    clazz.methodInfo
+                        .filter { method ->
+                            val deobfMethod = resolveMethodName(method.name) ?: method.name
+                            !deobfMethod.contains("$") && deobfMethod !in objectClassMethods
+                        }
+                        .forEach { method ->
+                            val deobfMethodName = resolveMethodName(method.name) ?: method.name
+
+                            val methodEntry = mutableMapOf<String, Any>()
+
+                            val resolvedReturnType = method.typeSignatureOrTypeDescriptor?.resultType?.toString()
+                                ?.let { deepResolveType(it) } ?: "Unit"
+
+                            val resolvedArgs = method.parameterInfo
+                                .mapNotNull { param ->
+                                    val raw = param.typeSignatureOrTypeDescriptor.toString()
+                                    deepResolveType(raw)
+                                }
+                                .sorted()
+
+                            if (resolvedArgs.isNotEmpty()) methodEntry["args"] = resolvedArgs
+
+                            val modifiers = formatModifiers(method.modifiers, ModifierContext.METHOD)
+
+                            methodEntry["modifiers"] = modifiers
+                            methodEntry["returns"] = resolvedReturnType
+
+                            val description = extractKDocFromAnnotations(method.annotationInfo)
+                            if (!description.isNullOrBlank()) methodEntry["description"] = description
+
+                            if (deobfMethodName == "invoke") {
+                                try {
+                                    val someClass = Class.forName(clazz.name, false, ClassLoader.getSystemClassLoader())
+                                    val hasOperatorInvoke = runCatching {
+                                        val kclass = someClass.kotlin
+                                        kclass.members.any {
+                                            it is KFunction<*> && resolveMethodName(it.name) == "invoke" && it.isOperator
+                                        }
+                                    }.getOrElse {
+                                        someClass.methods.any {
+                                            resolveMethodName(it.name) == "invoke" && it.parameterCount >= 0 && !method.isStatic
+                                        }
+                                    }
+                                    if (hasOperatorInvoke) methodEntry["isInvokeOperator"] = true
+                                } catch (_: Exception) {
+                                }
+                            }
+
+                            val signatureKey = "$deobfMethodName(${resolvedArgs.joinToString(",")})"
+                            classEntry[signatureKey] = methodEntry
+                        }
+
+                    clazz.fieldInfo
+                        .filter { field ->
+                            val deobfFieldName = resolveFieldName(field.name) ?: field.name
+                            val deobfClassNameForField = resolveClassName(field.className) ?: field.className
+                            val thisDeobfClassName = resolveClassName(clazz.name) ?: clazz.name
+                            !deobfFieldName.contains("$") && deobfClassNameForField == thisDeobfClassName
+                        }
+                        .forEach { field ->
+                            val deobfFieldName = resolveFieldName(field.name) ?: field.name
+                            val resolvedFieldType = deepResolveType(extractGenericType(field))
+
+                            val fieldEntry = mutableMapOf<String, Any>()
+                            fieldEntry["modifiers"] = formatModifiers(field.modifiers, ModifierContext.FIELD)
+                            fieldEntry["type"] = resolvedFieldType
+
+                            val description = extractKDocFromAnnotations(field.annotationInfo)
+                            if (!description.isNullOrBlank()) fieldEntry["description"] = description
+
+                            classEntry[deobfFieldName] = fieldEntry
+                        }
+
+                    classMap[deobfClassName] = classEntry
+                }
+        } catch (exception: Exception) {
+            logger.error(exception.message)
+        }
+
+        val gson = GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create()
+        jsonOutputPath.writeText(gson.toJson(classMap))
+        LogUtils.getLogger().info("Dumped class data to ${jsonOutputPath.absolutePath}")
+    }
+
+
+    /*fun dumpClassesToFile(sourcesDir: File, targetClasses: List<String>, fileName: String) {
         val jsonOutputPath = File(sourcesDir, fileName).apply {
             parentFile.mkdirs()
         }
-        val target = listOf(
-            "kotlin.Any",
-            "java.lang.Object"
-        )
         val objectClassMethods = setOf("toString", "hashCode", "equals")
         val classMap = mutableMapOf<String, MutableMap<String, Any>>()
-
+        val excludedPackages = listOf(
+            "net.minecraft",
+            "java.util.jar", "java.util.zip",
+            "java.net", "sun", "com.sun", "io.netty",
+            "org.objectweb.asm", "org.spongepowered.asm",
+            "org.openjdk.nashorn", "jdk.nashorn"
+        )
         ClassGraph()
             .enableAllInfo()
             .enableSystemJarsAndModules()
@@ -1118,7 +1513,13 @@ class FabricBootstrap : ModInitializer {
             .filter { classInfo ->
                 val isCompanionObject = classInfo.name.endsWith("\$Companion") &&
                         classInfo.constructorInfo.toString().contains("synthetic")
-                return@filter (classInfo.name in targetClasses || classInfo.name in target) && !isCompanionObject
+                return@filter classInfo.name in targetClasses &&
+                        !isCompanionObject &&
+                        !excludedPackages.any {
+                            classInfo.name.startsWith(
+                                it
+                            )
+                        }
             }
             .forEach { clazz ->
                 val classEntry = mutableMapOf<String, Any>()
@@ -1126,8 +1527,6 @@ class FabricBootstrap : ModInitializer {
                     clazz.modifiers,
                     ModifierContext.CLASS
                 )
-                /*  logger.info("Clazz: ${clazz.name}, modifier: ${clazz.modifiersStr}")*/
-
                 val superclass = if (clazz.superclass != null) clazz.superclass.name else ""
                 classEntry["\$superclass"] = superclass
                 val interfaceNames = clazz.interfaces
@@ -1138,7 +1537,6 @@ class FabricBootstrap : ModInitializer {
                 classEntry["\$modifiers"] = classModifiers
                 clazz.methodInfo
                     .filter { method ->
-                        /* method.isPublic &&*/
                         !method.name.contains("$") &&
                                 (
                                         method.name !in objectClassMethods
@@ -1153,15 +1551,10 @@ class FabricBootstrap : ModInitializer {
                             method.modifiers,
                             ModifierContext.METHOD
                         )
-                        /*logger.info(
-                            "Method: " + method.name + ", modifier: " + method.modifiersStr
-                        )*/
                         val methodEntry = mutableMapOf<String, Any>()
                         methodEntry["modifiers"] = modifiers
                         methodEntry["returns"] = method.typeSignatureOrTypeDescriptor?.resultType?.toString() ?: "Unit"
-                        //methodEntry["isStatic"] = method.isStatic
                         val description = extractKDocFromAnnotations(method.annotationInfo)
-
                         if (!description.isNullOrBlank()) {
                             methodEntry["description"] = description
                         }
@@ -1177,20 +1570,15 @@ class FabricBootstrap : ModInitializer {
                                     kclass.members.any { member ->
                                         if (member !is KFunction<*>) return@any false
                                         if (member.name != "invoke" || !member.isOperator) return@any false
-                                        val filteredParams = member.parameters.dropWhile {
-                                            it.kind == KParameter.Kind.INSTANCE || it.type.classifier == kclass
-                                        }
                                         true
                                     }
                                 }.getOrElse {
-                                    // Fallback: try to detect `invoke` manually from declared methods
                                     someClass.methods.any { m ->
                                         m.name == "invoke"
                                                 && m.parameterCount >= 0
                                                 && !method.isStatic
                                     }
                                 }
-
                                 if (hasOperatorInvoke)
                                     methodEntry["isInvokeOperator"] = true
                             } catch (e: Exception) {
@@ -1200,10 +1588,6 @@ class FabricBootstrap : ModInitializer {
                         ] =
                             methodEntry
                     }
-
-                // Extract fields
-                val declaredFieldNames = clazz.fieldInfo.map { it.name }.toSet()
-
                 clazz.fieldInfo
                     .filter { field ->
                         return@filter !field.name.contains("$") &&
@@ -1214,21 +1598,15 @@ class FabricBootstrap : ModInitializer {
                             field.modifiers,
                             ModifierContext.FIELD
                         )
-                        /* logger.info(
-                             "Field: " + field.name + ", modifier: " + field.modifiersStr
-                         )*/
                         val fieldEntry = mutableMapOf<String, Any>()
                         fieldEntry["modifiers"] = modifiers
                         fieldEntry["type"] = extractGenericType(field)
-                        // fieldEntry["isStatic"] = field.isStatic
                         val description = extractKDocFromAnnotations(field.annotationInfo)
-
                         if (!description.isNullOrBlank()) {
                             fieldEntry["description"] = description
                         }
                         classEntry[field.name] = fieldEntry
                     }
-
                 classMap[clazz.name] = classEntry
             }
         val gson = GsonBuilder()
@@ -1237,109 +1615,7 @@ class FabricBootstrap : ModInitializer {
             .create()
         jsonOutputPath.writeText(gson.toJson(classMap))
         LogUtils.getLogger().info(" Dumped class data to ${jsonOutputPath.absolutePath}")
-    }
-
-    fun dumpClassesToFile(
-        sourcesDir: File,
-        fileName: String,
-        includeKotlinTopLevelFunctions: Boolean
-    ): List<String> {
-        val jsonOutputPath = File(sourcesDir, fileName).apply {
-            parentFile.mkdirs()
-        }
-
-        val kotlinCorePackages = listOf(
-            "kotlin",
-            "kotlin.io",
-            "kotlin.text",
-            "kotlin.collections",
-            "kotlin.ranges",
-            "kotlin.sequences",
-            "kotlin.comparisons",
-            "kotlin.annotation"
-        )
-
-        val classList = mutableListOf<Map<String, Any>>()
-
-        val scanResult = ClassGraph()
-            .enableClassInfo()
-            .enableMethodInfo()
-            .enableSystemJarsAndModules()
-            .scan()
-
-        val allClasses = scanResult.allClasses
-
-        allClasses
-            .filter { classInfo ->
-                val nameContainsConsole = "ConsoleKt" in classInfo.name
-                val isPublic = classInfo.isPublic
-                val inCorePackage = kotlinCorePackages.contains(classInfo.packageName)
-                val isNotCompanion = !classInfo.name.endsWith("\$Companion")
-
-                if (nameContainsConsole) {
-                    println(" Found class: ${classInfo.name}")
-                    println("   ├─ isPublic: $isPublic")
-                    println("   ├─ inCorePackage: $inCorePackage (${classInfo.packageName})")
-                    println("   └─ isNotCompanion: $isNotCompanion")
-                }
-
-                isPublic && inCorePackage && isNotCompanion
-            }
-
-            .forEach { clazz ->
-                classList.add(
-                    mapOf(
-                        "name" to clazz.name,
-                        "isClass" to true
-                    )
-                )
-            }
-
-        if (includeKotlinTopLevelFunctions) {
-
-
-            allClasses
-                .filter { it.name.endsWith("Kt") && kotlinCorePackages.contains(it.packageName) }
-                .forEach { ktClass ->
-                    if ("Console" in ktClass.name) {
-                        println("🔍 Inspecting methods for: ${ktClass.name}")
-                        ktClass.methodInfo.forEach {
-                            println("   └─ method: ${it.name}")
-                            println("      ├─ modifiers: ${it.getModifiersStr()}")
-                            println("      ├─ isPublic: ${it.isPublic}")
-                            println("      ├─ isStatic: ${it.isStatic}")
-                            println("      ├─ isSynthetic: ${it.isSynthetic}")
-                            println("      ├─ isBridge: ${it.isBridge}")
-                            println("      └─ hasBody: ${it.hasBody()}")
-                        }
-
-                    }
-
-                    ktClass.methodInfo
-                        .filter { it.isPublic && !it.name.contains("$") }
-                        .map { method ->
-                            val fqName = "${ktClass.packageName}.${method.name}"
-                            println("🔹 Found top-level function: $fqName")
-                            mapOf(
-                                "name" to fqName,
-                                "isClass" to false
-                            )
-                        }
-                        .forEach { classList.add(it) }
-                }
-        }
-
-
-        val gson = GsonBuilder()
-            .setPrettyPrinting()
-            .disableHtmlEscaping()
-            .create()
-
-        jsonOutputPath.writeText(gson.toJson(classList))
-        LogUtils.getLogger().info(" Exported ${classList.size} entries to ${jsonOutputPath.absolutePath}")
-
-        return classList.map { it["name"].toString() }
-    }
+    }*/
 
     fun splitGenericAware(input: String): List<String> {
         val result = mutableListOf<String>()
@@ -1394,7 +1670,6 @@ class FabricBootstrap : ModInitializer {
                 val argsString = Regex("""\((.*)\)""").find(member.fullyQualifiedName)?.groupValues?.get(1)
                 val args = argsString?.takeIf { it.isNotEmpty() }?.let { splitGenericAware(it) } ?: emptyList()
 
-
                 val memberName = if (args.isNotEmpty()) {
                     "${member.source}(${args.joinToString(",")})"
                 } else {
@@ -1405,14 +1680,25 @@ class FabricBootstrap : ModInitializer {
                     "returns" to member.returnType,
                     "isStatic" to false
                 )
-                if (!args.isNullOrEmpty()) entry["args"] = args
+
+                if (member.modifiers.isNotEmpty()) {
+                    entry["modifiers"] = member.modifiers
+                }
+
+                if (args.isNotEmpty()) entry["args"] = args
                 if (member.type == "invoke") entry["isInvokeOperator"] = true
 
                 members[memberName] = entry
             }
 
             if (members.isNotEmpty()) {
-                result[className] = members
+                val classEntry = mutableMapOf<String, Any>(
+                    "\$modifiers" to clazz.modifiers.joinToString(" "),
+                    "\$typeParameters" to clazz.typeParameters
+                )
+
+                classEntry.putAll(members)
+                result[className] = classEntry
             }
         }
 
@@ -1420,6 +1706,7 @@ class FabricBootstrap : ModInitializer {
         outputFile.parentFile?.mkdirs()
         outputFile.writeText(gson.toJson(result))
     }
+
 
     private fun isStaticConstant(field: FieldInfo): Boolean {
         val modifiers = field.modifiers

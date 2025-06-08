@@ -3,7 +3,10 @@ package net.liopyu.kotlinscript.util;
 import sun.misc.Unsafe;
 
 import java.lang.reflect.Field;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 

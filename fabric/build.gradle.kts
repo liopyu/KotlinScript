@@ -1,5 +1,3 @@
-
-
 configurations.all {
     resolutionStrategy {
         force(libs.fabric.loader)
@@ -54,38 +52,42 @@ dependencies {
         isTransitive = false
     }
     modRuntimeOnly(libs.bundles.fabric.integrations.runtimeOnly)
-   /* include("org.jetbrains.kotlin:kotlin-scripting-jsr223:2.0.21")
-    include("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.0.21")
-    include("org.jetbrains.kotlin:kotlin-script-util:1.8.22")*/
-    implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.0.21")
+    /* include("org.jetbrains.kotlin:kotlin-scripting-jsr223:2.0.21")
+     include("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.0.21")
+     include("org.jetbrains.kotlin:kotlin-script-util:1.8.22")*/
+
 
     include("org.jetbrains.kotlin:kotlin-scripting-common:2.0.21")
     include("org.jetbrains.kotlin:kotlin-scripting-jvm:2.0.21")
     include("org.jetbrains.kotlin:kotlin-scripting-jvm-host:2.0.21")
-   /* include("org.jetbrains.kotlin:kotlin-scripting-dependencies:2.0.21")
-    include("org.jetbrains.kotlin:kotlin-scripting-dependencies-maven:2.0.21")*/
-    implementation("org.jetbrains.kotlinx:kotlinx-metadata-jvm:0.5.0")
+    /* include("org.jetbrains.kotlin:kotlin-scripting-dependencies:2.0.21")
+     include("org.jetbrains.kotlin:kotlin-scripting-dependencies-maven:2.0.21")*/
+    //implementation("org.jetbrains.kotlinx:kotlinx-metadata-jvm:0.5.0")
+    implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.0.21")
     implementation("io.github.classgraph:classgraph:4.8.149")
-
+    implementation("net.fabricmc:mapping-io:0.5.0")
     implementation(kotlin("script-runtime"))
-  /*  include(kotlin("script-runtime"))*/
+    /*  include(kotlin("script-runtime"))*/
 
-   /* include(kotlin("scripting-jsr223"))
-    include(kotlin("compiler-embeddable"))*/
+    /* include(kotlin("scripting-jsr223"))
+     include(kotlin("compiler-embeddable"))*/
     include(libs.fabric.kotlin)
 
     listOf(
-/*
+        /*
+                kotlin("script-runtime"),
+        */
+        "org.jetbrains.kotlin:kotlin-compiler-embeddable:2.0.21",
         kotlin("script-runtime"),
-*/
+        "io.github.classgraph:classgraph:4.8.149",
         "org.jetbrains.kotlin:kotlin-scripting-common:2.0.21",
         "org.jetbrains.kotlin:kotlin-scripting-jvm:2.0.21",
         "org.jetbrains.kotlin:kotlin-scripting-jvm-host:2.0.21",
-      /*  "org.jetbrains.kotlin:kotlin-scripting-dependencies-maven:2.0.21",
-        "org.jetbrains.kotlin:kotlin-scripting-dependencies:2.0.21",*/
-       /*
-        kotlin("scripting-jsr223"),
-        kotlin("compiler-embeddable"),*/
+        /*  "org.jetbrains.kotlin:kotlin-scripting-dependencies-maven:2.0.21",
+          "org.jetbrains.kotlin:kotlin-scripting-dependencies:2.0.21",*/
+        /*
+         kotlin("scripting-jsr223"),
+         kotlin("compiler-embeddable"),*/
         libs.graal
     ).forEach {
         bundle(it)

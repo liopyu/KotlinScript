@@ -165,6 +165,7 @@ bootstrap.invoke()
 class MyClass private constructor() {
 
     companion object {
+        @JvmStatic
         operator fun invoke(): MyClass {
             println("From companion invoke")
             return MyClass()
@@ -177,3 +178,20 @@ fun main() {
     val instance = MyClass() // Calls companion's invoke()
 }
 Boolean.TRUE
+
+open class s {
+    final fun some() {
+
+    }
+    protected final val minecraft: Minecraft
+        get() {
+            TODO()
+        }
+}
+
+interface Nameable {
+    fun getName(): Component
+    fun hasCustomName(): Boolean {return true}
+    fun getDisplayName(): Component {}
+    fun getCustomName(): Component {}
+}
