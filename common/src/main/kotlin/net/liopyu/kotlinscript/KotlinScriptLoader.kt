@@ -6,29 +6,59 @@ import kotlin.script.experimental.api.*
 
 class KotlinScriptLoader {
 
-    companion object{
+    companion object {
 
         private val DIR = "config/scripts/"
         private val scriptFileDir = File(DIR)
+
         @JvmStatic
         fun loadScripts() {
             scriptFileDir.mkdirs()
+            val logger = LogUtils.getLogger()
+
+            val evalContext = mutableMapOf<String, Any>()
+
             scriptFileDir.walkTopDown().forEach { file ->
                 if (file.isFile && file.extension == "kts") {
-                    LogUtils.getLogger().info("Loading script: ${file.relativeTo(scriptFileDir)}...")
-                    val scriptContent = file.readText()
-                    KS(scriptContent).eval().logResult(file.name)
+                    logger.info("Loading script: ${file.relativeTo(scriptFileDir)}...")
+                    val result = KS(file).eval(evalContext)
+
+                    if (result is ResultWithDiagnostics.Success) {
+                        val evaluationResult = result.value
+                        val returnVal = (evaluationResult.returnValue as? ResultValue.Value)?.value
+
+                        if (returnVal != null) {
+                            evalContext["x"] = returnVal
+                            logger.info("ReturnVal: " + returnVal)
+                        }
+
+                        result.reports.forEach {
+                            if (it.isError()) {
+                                logger.error(it.message)
+                            }
+                        }
+                    } else {
+                        logger.error("Script evaluation failed for file: ${file.name}")
+                        result.reports.forEach {
+                            if (it.isError()) {
+                                logger.error(it.message)
+                            }
+                        }
+                    }
                 } else if (file.isDirectory) {
-                    LogUtils.getLogger().info("Scanning directory: ${file.relativeTo(scriptFileDir)}")
+                    logger.info("Scanning directory: ${file.relativeTo(scriptFileDir)}")
                 }
             }
         }
 
 
-
         private fun ResultWithDiagnostics<EvaluationResult>.logResult(name: String) {
             onFailure {
-                LogUtils.getLogger().error(name+""+ it.reports)
+                it.reports.forEach {
+                    if (it.severity > ScriptDiagnostic.Severity.DEBUG) {
+                        println("$name : ${it.message}" + if (it.exception == null) "" else ": ${it.exception}")
+                    }
+                }
             }.onSuccess {
                 LogUtils.getLogger().info("Script: $name successfully loaded!")
                 asSuccess()

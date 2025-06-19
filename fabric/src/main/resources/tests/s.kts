@@ -1,5 +1,6 @@
-package some
 
+
+import java.lang.reflect.Modifier
 import com.mojang.blaze3d.systems.RenderSystem
 import com.mojang.blaze3d.vertex.DefaultVertexFormat
 import com.mojang.blaze3d.vertex.Tesselator
@@ -172,6 +173,7 @@ class MyClass private constructor() {
         }
     }
 }
+
 kotlin.jvm.internal.PrimitiveSpreadBuilder<?>()
 
 fun main() {
@@ -195,3 +197,4 @@ interface Nameable {
     fun getDisplayName(): Component {}
     fun getCustomName(): Component {}
 }
+

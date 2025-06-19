@@ -72,11 +72,15 @@ dependencies {
     /* include(kotlin("scripting-jsr223"))
      include(kotlin("compiler-embeddable"))*/
     include(libs.fabric.kotlin)
-
+    implementation("org.jetbrains.kotlin:kotlin-scripting-dependencies")
+    implementation("org.jetbrains.kotlin:kotlin-scripting-dependencies-maven")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+    /*implementation("org.jetbrains.kotlin:kotlin-scripting-dependencies:2.0.21")*/
     listOf(
         /*
                 kotlin("script-runtime"),
         */
+        "org.jetbrains.kotlin:kotlin-scripting-dependencies:2.0.21",
         "org.jetbrains.kotlin:kotlin-compiler-embeddable:2.0.21",
         kotlin("script-runtime"),
         "io.github.classgraph:classgraph:4.8.149",

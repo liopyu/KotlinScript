@@ -260,6 +260,7 @@ class FabricBootstrap : ModInitializer {
         val list = l//dumpClassesToFile(sourcesDir)
         dumpClassesToFile(sourcesDir, list, "available_members.json")
         //dumpCompanionObjectsToFile(sourcesDir, list, "companion_objects.json")
+
     }
 
 
