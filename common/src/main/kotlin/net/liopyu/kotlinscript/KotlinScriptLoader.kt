@@ -17,28 +17,26 @@ class KotlinScriptLoader {
             val logger = LogUtils.getLogger()
 
             val evalContext = mutableMapOf<String, Any>()
-
             scriptFileDir.walkTopDown().forEach { file ->
                 if (file.isFile && file.extension == "kts") {
-                    logger.info("Loading script: ${file.relativeTo(scriptFileDir)}...")
-                    val result = KS(file).eval(evalContext)
-
+                    //  logger.info("Loading script: ${file.relativeTo(scriptFileDir)}...")
+                    val result = KS().eval(file, evalContext)
                     if (result is ResultWithDiagnostics.Success) {
-                        val evaluationResult = result.value
-                        val returnVal = (evaluationResult.returnValue as? ResultValue.Value)?.value
-
-                        if (returnVal != null) {
-                            evalContext["x"] = returnVal
-                            logger.info("ReturnVal: " + returnVal)
-                        }
-
+                        /* val evaluationResult = result.value
+                         val returnVal = (evaluationResult.returnValue as? ResultValue.Value)?.value
+ */
+                        /*   if (returnVal != null) {
+                               evalContext["x"] = returnVal
+                               logger.info("ReturnVal: " + returnVal)
+                           }
+   */
                         result.reports.forEach {
                             if (it.isError()) {
                                 logger.error(it.message)
                             }
                         }
                     } else {
-                        logger.error("Script evaluation failed for file: ${file.name}")
+                        // logger.error("Script evaluation failed for file: ${file.name}")
                         result.reports.forEach {
                             if (it.isError()) {
                                 logger.error(it.message)
@@ -46,7 +44,7 @@ class KotlinScriptLoader {
                         }
                     }
                 } else if (file.isDirectory) {
-                    logger.info("Scanning directory: ${file.relativeTo(scriptFileDir)}")
+                    // logger.info("Scanning directory: ${file.relativeTo(scriptFileDir)}")
                 }
             }
         }

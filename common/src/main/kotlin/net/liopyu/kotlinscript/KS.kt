@@ -34,16 +34,19 @@ public val sharedEvalConfig = ScriptEvaluationConfiguration {
     providedProperties("x" to "Hello")
 }
 
-data class KS(val scriptFile: File) {
+class KS {
     companion object {
         var globalBindings: Map<String, Any> = emptyMap()
         val defaultImports = listOf(
             "net.liopyu.kotlinscript.util.KUtils",
-            "com.mojang.logging.LogUtils"
+            "com.mojang.logging.LogUtils",
+            "net.liopyu.kotlinscript.util.console"
         )
     }
 
-    fun eval(context: Map<String, Any> = emptyMap()): ResultWithDiagnostics<EvaluationResult> {
+    val utilityScript = "val y = 10".toScriptSource()
+
+    fun eval(scriptFile: File, context: Map<String, Any> = emptyMap()): ResultWithDiagnostics<EvaluationResult> {
         val config = sharedEvalConfig.with {
             providedProperties(context)
         }
@@ -58,9 +61,7 @@ data class KS(val scriptFile: File) {
             compilationConfig,
             config
         )
-
     }
-
 
 }
 

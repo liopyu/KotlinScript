@@ -75,7 +75,9 @@ dependencies {
     implementation("org.jetbrains.kotlin:kotlin-scripting-dependencies")
     implementation("org.jetbrains.kotlin:kotlin-scripting-dependencies-maven")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-    /*implementation("org.jetbrains.kotlin:kotlin-scripting-dependencies:2.0.21")*/
+    /* implementation("org.jetbrains.kotlin:kotlin-scripting-dependencies:2.0.21")*/
+    implementation("org.jetbrains.kotlin:kotlin-main-kts:2.0.21") // or your Kotlin version
+
     listOf(
         /*
                 kotlin("script-runtime"),
@@ -87,8 +89,10 @@ dependencies {
         "org.jetbrains.kotlin:kotlin-scripting-common:2.0.21",
         "org.jetbrains.kotlin:kotlin-scripting-jvm:2.0.21",
         "org.jetbrains.kotlin:kotlin-scripting-jvm-host:2.0.21",
+        /*"org.jetbrains.kotlin:kotlin-scripting-dependencies:2.0.21",*/
+        "org.jetbrains.kotlin:kotlin-main-kts:2.0.21",
         /*  "org.jetbrains.kotlin:kotlin-scripting-dependencies-maven:2.0.21",
-          "org.jetbrains.kotlin:kotlin-scripting-dependencies:2.0.21",*/
+          */
         /*
          kotlin("scripting-jsr223"),
          kotlin("compiler-embeddable"),*/
@@ -101,6 +105,10 @@ dependencies {
     minecraftServerLibraries(libs.icu4j)
 
 }
+tasks.jar {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
 tasks {
     // The AW file is needed in :fabric project resources when the game is run.
     val copyAccessWidener by registering(Copy::class) {

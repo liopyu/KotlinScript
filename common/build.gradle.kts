@@ -38,8 +38,9 @@ dependencies {
     implementation("org.jetbrains.kotlin:kotlin-scripting-common:2.0.21")
     implementation("org.jetbrains.kotlin:kotlin-scripting-jvm:2.0.21")
     implementation("org.jetbrains.kotlin:kotlin-scripting-jvm-host:2.0.21")
-   /* implementation("org.jetbrains.kotlin:kotlin-scripting-dependencies:2.0.21")
-    implementation("org.jetbrains.kotlin:kotlin-scripting-dependencies-maven:2.0.21")*/
+    implementation("org.jetbrains.kotlin:kotlin-scripting-dependencies:2.0.21")
+    /*
+     implementation("org.jetbrains.kotlin:kotlin-scripting-dependencies-maven:2.0.21")*/
     // Showdown
     modCompileOnly(libs.graal)
 
@@ -49,7 +50,9 @@ dependencies {
     // Unit Testing
     testImplementation(libs.bundles.unitTesting)
 }
-
+tasks.jar {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
 tasks.withType<Test> {
     useJUnitPlatform()
     testLogging {
