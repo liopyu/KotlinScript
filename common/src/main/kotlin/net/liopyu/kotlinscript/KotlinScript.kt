@@ -23,10 +23,8 @@ object KotlinScriptInit {
     fun isValidImport(suggestion: String?, type: String): CompletableFuture<Boolean> {
         if (suggestion.isNullOrBlank()) return CompletableFuture.completedFuture(false)
 
-        // Cache lookup to skip redundant checks
         importCache[suggestion]?.let { return CompletableFuture.completedFuture(it) }
 
-        // Early filtering for known invalid patterns
         if (
             suggestion.contains("package-info")) {
             importCache[suggestion] = false
@@ -35,7 +33,6 @@ object KotlinScriptInit {
 
         val suggestionToEval = "import $suggestion"
 
-        // Async evaluation with caching
         return CompletableFuture.supplyAsync({
             try {
                 val ks = KSText(suggestionToEval)

@@ -31,15 +31,16 @@ dependencies {
     // Flywheel has no common dep so just pick one and don't use any platform specific code in common
     // modCompileOnly(libs.flywheelFabric)
     /*implementation("org.jetbrains.kotlin:kotlin-scripting-jsr223:2.0.21")
-    implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.0.21")
     implementation("org.jetbrains.kotlin:kotlin-script-util:1.8.22")*/
+    implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.0.21")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.1")
     implementation("org.jetbrains.kotlin:kotlin-scripting-common:2.0.21")
     implementation("org.jetbrains.kotlin:kotlin-scripting-jvm:2.0.21")
     implementation("org.jetbrains.kotlin:kotlin-scripting-jvm-host:2.0.21")
-   /* implementation("org.jetbrains.kotlin:kotlin-scripting-dependencies:2.0.21")
-    implementation("org.jetbrains.kotlin:kotlin-scripting-dependencies-maven:2.0.21")*/
+    /* implementation("org.jetbrains.kotlin:kotlin-scripting-dependencies:2.0.21")
+     implementation("org.jetbrains.kotlin:kotlin-scripting-dependencies-maven:2.0.21")*/
+    implementation("net.fabricmc:mapping-io:0.5.0")
     // Showdown
     modCompileOnly(libs.graal)
 
@@ -57,6 +58,10 @@ tasks.withType<Test> {
         setExceptionFormat("full")
     }
 }
+tasks.withType<Jar> {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
 /*
 sourceSets {
     main {

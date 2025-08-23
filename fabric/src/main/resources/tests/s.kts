@@ -1,68 +1,73 @@
+package some
 
+import java.lang.Math
+import kotlin.Unit
+import java.lang.Exception
+import kotlin.Float
+import kotlin.Int
 
-import java.lang.reflect.Modifier
 import com.mojang.blaze3d.systems.RenderSystem
-import com.mojang.blaze3d.vertex.DefaultVertexFormat
-import com.mojang.blaze3d.vertex.Tesselator
-import com.mojang.blaze3d.vertex.VertexBuffer
-import com.mojang.blaze3d.vertex.VertexFormat
+import net.minecraft.class_290
+import net.minecraft.class_289
+import net.minecraft.class_291
+import net.minecraft.class_293
 import com.mojang.logging.LogUtils
-import net.liopyu.kotlinscript.FabricBootstrap
-import net.minecraft.client.Minecraft
-import net.minecraft.client.gui.GuiGraphics
-import net.minecraft.client.gui.screens.Screen
-import net.minecraft.client.renderer.GameRenderer
-import net.minecraft.core.Registry
-import net.minecraft.core.registries.BuiltInRegistries
-import net.minecraft.network.chat.Component
-import net.minecraft.resources.ResourceLocation
-import net.minecraft.world.InteractionHand
-import net.minecraft.world.InteractionResultHolder
-import net.minecraft.world.entity.player.Player
-import net.minecraft.world.item.EnderEyeItem
-import net.minecraft.world.item.Item
-import net.minecraft.world.item.ItemStack
-import net.minecraft.world.level.Level
+import net.minecraft.class_310
+import net.minecraft.class_332
+import net.minecraft.class_437
+import net.minecraft.class_757
+import net.minecraft.class_2378
+import net.minecraft.class_7923
+import net.minecraft.class_2561
+import net.minecraft.class_2960
+import net.minecraft.class_1268
+import net.minecraft.class_1271
+import net.minecraft.class_1657
+import net.minecraft.class_1777
+import net.minecraft.class_1792
+import net.minecraft.class_1799
+import net.minecraft.class_1937
 
-var onItemUse: (Level, Player, InteractionHand) -> Unit = { level, player, hand ->
-    try {
-        Minecraft.getInstance().execute {
-            Minecraft.getInstance().setScreen(SimpleScreen())
+var onItemUse: (net.minecraft.class_1937, net.minecraft.class_1657, net.minecraft.class_1268) -> net.minecraft.class_4428 =
+    { level, player, hand ->
+        try {
+            net.minecraft.class_310.method_1551().execute {
+                net.minecraft.class_310.method_1551().setScreen(SimpleScreen())
+            }
+            net.minecraft.class_310.method_1551().play
+        } catch (exception: Exception) {
+            LogUtils.getLogger().error("Error using custom ender eye.", exception)
         }
-    } catch (exception: Exception) {
-        LogUtils.getLogger().error("Error using custom ender eye.", exception)
     }
-}
 
-class SomeEnderEyeItem(settings: Item.Properties) : EnderEyeItem(settings) {
-    override fun use(level: Level, player: Player, hand: InteractionHand): InteractionResultHolder<ItemStack> {
+class SomeEnderEyeItem(settings: net.minecraft.class_1792.Properties) : net.minecraft.class_1777(settings) {
+    override fun use(
+        level: net.minecraft.class_1937,
+        player: net.minecraft.class_1657,
+        hand: net.minecraft.class_1268
+    ): net.minecraft.class_1271<net.minecraft.class_1799> {
         onItemUse(level, player, hand)
         return super.use(level, player, hand)
     }
 }
 
-val myItem = SomeEnderEyeItem(Item.Properties())
+val myItem = SomeEnderEyeItem(net.minecraft.class_1792.Properties())
 LogUtils.getLogger().info(myItem::class.qualifiedName)
-Registry.register(
-    BuiltInRegistries.ITEM,
-    ResourceLocation.fromNamespaceAndPath("kotlinscript", "some_ender_eye_item"),
+net.minecraft.class_2378.method_10226(
+    net.minecraft.class_7923.field_41178,
+    net.minecraft.class_2960.method_60655("kotlinscript", "some_ender_eye_item"),
     myItem
 )
-/*EventHandlers.register(EndTick, { event ->
-    println("EndTick event triggered")
-})*/
-
-// Modify grammar.js to make this syntax error
-/* EventHandlers.register(ClientEvents.END_TICK) { minecraft ->
-    println("End client tick! Player = ${minecraft.player?.name?.string}")
-} */
-class SimpleScreen : Screen(Component.literal("Simple Screen")) {
-    override fun renderBackground(guiGraphics: GuiGraphics, mouseX: Int, mouseY: Int, partialTicks: Float) {
-        // Completely replace default blur+panorama
-        // guiGraphics.fill(0, 0, width, height, 0xFF000000.toInt())
+net.minecraft.class_2378.method_10230(
+    net.minecraft.class_7923.field_41178,
+    net.minecraft.class_2960.method_60655("kotlinscript", "some_ender_eye_item"),
+    myItem
+)
+class SimpleScreen : net.minecraft.class_437(net.minecraft.class_2561.method_43470("Simple net.minecraft.class_437")) {
+    override fun renderBackground(guiGraphics: net.minecraft.class_332, mouseX: Int, mouseY: Int, partialTicks: Float) {
     }
 
-    override fun render(guiGraphics: GuiGraphics, mouseX: Int, mouseY: Int, partialTicks: Float) {
+    override fun render(guiGraphics: net.minecraft.class_332, mouseX: Int, mouseY: Int, partialTicks: Float) {
         drawRoundedRect(
             guiGraphics,
             width / 2 - 50,
@@ -71,10 +76,10 @@ class SimpleScreen : Screen(Component.literal("Simple Screen")) {
             40,
             8,
             0xAA000000.toInt()
-        ) // Semi-transparent black
+        )
         guiGraphics.drawCenteredString(
             font,
-            "Hello from KotlinScript Screen!",
+            "Hello from KotlinScript net.minecraft.class_437!",
             width / 2,
             height / 2 - font.lineHeight / 2,
             0xFFFFFF
@@ -86,7 +91,15 @@ class SimpleScreen : Screen(Component.literal("Simple Screen")) {
     override fun shouldCloseOnEsc(): Boolean = true
 }
 
-fun drawRoundedRect(guiGraphics: GuiGraphics, x: Int, y: Int, width: Int, height: Int, radius: Int, color: Int) {
+fun drawRoundedRect(
+    guiGraphics: net.minecraft.class_332,
+    x: Int,
+    y: Int,
+    width: Int,
+    height: Int,
+    radius: Int,
+    color: Int
+) {
     val pose = guiGraphics.pose()
     val segments = 12
 
@@ -94,8 +107,8 @@ fun drawRoundedRect(guiGraphics: GuiGraphics, x: Int, y: Int, width: Int, height
     RenderSystem.defaultBlendFunc()
     RenderSystem.disableDepthTest()
 
-    val tesselator = Tesselator.getInstance()
-    val buffer = tesselator.begin(VertexFormat.Mode.TRIANGLE_FAN, DefaultVertexFormat.POSITION_COLOR)
+    val tesselator = net.minecraft.class_289.method_1348()
+    val buffer = tesselator.begin(net.minecraft.class_293.Mode.TRIANGLE_FAN, net.minecraft.class_290.field_1576)
 
     fun vertex(xf: Float, yf: Float) {
         buffer.addVertex(pose.last().pose(), xf, yf, 0f).setColor(
@@ -108,46 +121,42 @@ fun drawRoundedRect(guiGraphics: GuiGraphics, x: Int, y: Int, width: Int, height
 
     val cx = x + width / 2f
     val cy = y + height / 2f
-    vertex(cx, cy) // center of rectangle
+    vertex(cx, cy)
 
-    // Top-left corner
     for (i in 0..segments) {
         val angle = Math.PI + Math.PI / 2 * (i.toDouble() / segments)
         vertex((x + radius + Math.cos(angle) * radius).toFloat(), (y + radius + Math.sin(angle) * radius).toFloat())
     }
 
-    // Top-right corner
-    for (i in 0..segments) {
-        val angle = -Math.PI / 2 + Math.PI / 2 * (i.toDouble() / segments)
-        vertex(
-            (x + width - radius + Math.cos(angle) * radius).toFloat(),
-            (y + radius + Math.sin(angle) * radius).toFloat()
-        )
-    }
+    /*  for (i in 0..segments) {
+         val angle = -Math.PI / 2 + Math.PI / 2 * (i.toDouble() / segments)
+         vertex(
+             (x + width - radius + Math.cos(angle) * radius).toFloat(),
+             (y + radius + Math.sin(angle) * radius).toFloat()
+         )
+     }
 
-    // Bottom-right corner
-    for (i in 0..segments) {
-        val angle = 0.0 + Math.PI / 2 * (i.toDouble() / segments)
-        vertex(
-            (x + width - radius + Math.cos(angle) * radius).toFloat(),
-            (y + height - radius + Math.sin(angle) * radius).toFloat()
-        )
-    }
+     for (i in 0..segments) {
+         val angle = 0.0 + Math.PI / 2 * (i.toDouble() / segments)
+         vertex(
+             (x + width - radius + Math.cos(angle) * radius).toFloat(),
+             (y + height - radius + Math.sin(angle) * radius).toFloat()
+         )
+     } */
 
-    // Bottom-left corner
-    for (i in 0..segments) {
-        val angle = Math.PI / 2 + Math.PI / 2 * (i.toDouble() / segments)
-        vertex(
-            (x + radius + Math.cos(angle) * radius).toFloat(),
-            (y + height - radius + Math.sin(angle) * radius).toFloat()
-        )
-    }
+    /*  for (i in 0..segments) {
+         val angle = Math.PI / 2 + Math.PI / 2 * (i.toDouble() / segments)
+         vertex(
+             (x + radius + Math.cos(angle) * radius).toFloat(),
+             (y + height - radius + Math.sin(angle) * radius).toFloat()
+         )
+     } */
 
     val mesh = buffer.buildOrThrow()
-    val vertexBuffer = VertexBuffer(VertexBuffer.Usage.STATIC)
+    val vertexBuffer = net.minecraft.class_291(net.minecraft.class_291.Usage.STATIC)
     vertexBuffer.upload(mesh)
 
-    val shader = GameRenderer.getPositionColorShader()
+    val shader = net.minecraft.class_757.method_34540()
     val modelViewMatrix = pose.last().pose()
     val projectionMatrix = RenderSystem.getProjectionMatrix()
 
@@ -155,46 +164,8 @@ fun drawRoundedRect(guiGraphics: GuiGraphics, x: Int, y: Int, width: Int, height
     if (shader != null) {
         vertexBuffer.drawWithShader(modelViewMatrix, projectionMatrix, shader)
     }
-    VertexBuffer.unbind()
+    net.minecraft.class_291.method_1354()
 
     RenderSystem.enableDepthTest()
     RenderSystem.disableBlend()
 }
-FabricBootstrap.s
-val bootstrap: FabricBootstrap = FabricBootstrap()
-bootstrap.invoke()
-class MyClass private constructor() {
-
-    companion object {
-        @JvmStatic
-        operator fun invoke(): MyClass {
-            println("From companion invoke")
-            return MyClass()
-        }
-    }
-}
-
-kotlin.jvm.internal.PrimitiveSpreadBuilder<?>()
-
-fun main() {
-    val instance = MyClass() // Calls companion's invoke()
-}
-Boolean.TRUE
-
-open class s {
-    final fun some() {
-
-    }
-    protected final val minecraft: Minecraft
-        get() {
-            TODO()
-        }
-}
-
-interface Nameable {
-    fun getName(): Component
-    fun hasCustomName(): Boolean {return true}
-    fun getDisplayName(): Component {}
-    fun getCustomName(): Component {}
-}
-

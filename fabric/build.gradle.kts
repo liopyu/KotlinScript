@@ -1,3 +1,7 @@
+import net.fabricmc.loom.api.LoomGradleExtensionAPI
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+
 configurations.all {
     resolutionStrategy {
         force(libs.fabric.loader)
@@ -75,11 +79,13 @@ dependencies {
     implementation("org.jetbrains.kotlin:kotlin-scripting-dependencies")
     implementation("org.jetbrains.kotlin:kotlin-scripting-dependencies-maven")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+    implementation("net.fabricmc:mapping-io:0.5.0")
     /*implementation("org.jetbrains.kotlin:kotlin-scripting-dependencies:2.0.21")*/
     listOf(
         /*
                 kotlin("script-runtime"),
         */
+        "net.fabricmc:mapping-io:0.5.0",
         "org.jetbrains.kotlin:kotlin-scripting-dependencies:2.0.21",
         "org.jetbrains.kotlin:kotlin-compiler-embeddable:2.0.21",
         kotlin("script-runtime"),
@@ -125,5 +131,20 @@ tasks {
 
     sourcesJar {
         dependsOn(copyAccessWidener)
+    }
+}
+
+
+tasks.register<DefaultTask>("exportLoomMappings") {
+    group = "fabric"
+    description = "Export the Loom mappings (Tiny format) to the build directory"
+
+    doLast {
+        val loom = project.extensions.getByName("loom") as LoomGradleExtensionAPI
+        val mappingsFile = loom.mappingsFile
+        val outFile = file("$buildDir/loom-mappings.tiny")
+        outFile.parentFile.mkdirs()
+        Files.copy(mappingsFile.toPath(), outFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        println("Exported Loom mappings to: ${outFile.absolutePath}")
     }
 }

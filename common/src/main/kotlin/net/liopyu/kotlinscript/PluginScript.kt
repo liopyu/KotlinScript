@@ -16,13 +16,12 @@ object ScriptConfiguration : ScriptCompilationConfiguration({
     ide.acceptedLocations(ScriptAcceptedLocation.Everywhere)
     compilerOptions("-jvm-target", "17")
     defaultImports(KS.defaultImports)
-
     jvm {
-
         dependenciesFromClassloader(
-            classLoader = KS::class.java.classLoader,
+            classLoader = sharedClassLoader,
             wholeClasspath = true
         )
+
     }
 })
 

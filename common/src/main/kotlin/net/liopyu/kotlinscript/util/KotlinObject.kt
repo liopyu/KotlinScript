@@ -16,11 +16,12 @@ data class KotlinObject(
 
 data class MethodEntry(
     val name: String,
-    val args: List<String>? = null,
-    val returns: String
+    val type: String,
+    val parentClass: List<String>? = null
 )
 
 data class FieldEntry(
     val name: String,
-    val type: String
+    val type: String,
+    val parentClass: String
 )

@@ -7,7 +7,8 @@ import io.github.classgraph.ClassGraph
 import io.github.classgraph.FieldInfo
 import kotlinx.coroutines.*
 import net.fabricmc.api.ModInitializer
-import net.liopyu.kotlinscript.util.KotlinObject
+import net.fabricmc.loader.impl.launch.FabricLauncherBase
+import net.liopyu.kotlinscript.util.*
 import org.jetbrains.java.decompiler.main.decompiler.ConsoleDecompiler
 import org.jetbrains.kotlin.cli.common.CLIConfigurationKeys
 import org.jetbrains.kotlin.cli.common.config.addKotlinSourceRoot
@@ -71,7 +72,7 @@ annotation class JsonProperty(val required: Boolean)
 
 
 val logger = LogUtils.getLogger()
-
+/*
 val instanceDir = File(System.getProperty("user.dir"))
 val sourcesDir = File(instanceDir, "kotlinsources")
 
@@ -183,7 +184,7 @@ fun tinyToJson(inputFile: File) {
             }
         }
     }
-}
+}*/
 
 @Retention(AnnotationRetention.RUNTIME)
 annotation class KDoc(val value: String)
@@ -215,6 +216,9 @@ class FabricBootstrap : ModInitializer {
     """
     )
     override fun onInitialize() {
+        val tree = FabricLauncherBase.getLauncher().getMappingConfiguration().getMappings()
+        buildMappingsIfNeeded(tree, 0, 1)
+
         KotlinScriptInit.preInitialize()
         if (!sourcesDir.exists()) {
             LogUtils.getLogger()
@@ -246,19 +250,9 @@ class FabricBootstrap : ModInitializer {
             "net.liopyu.kotlinscript.Utils",
         )
 
-        /*val resourceStream = object {}.javaClass.getResourceAsStream("/mappings/mappings.tiny")
-            ?: error("mappings.tiny not found in mod resources")
-        val mappingsFile = File.createTempFile("mappings", ".tiny").apply {
-            outputStream().use { out ->
-                resourceStream.use { input ->
-                    input.copyTo(out)
-                }
-            }
-            deleteOnExit()
-        }
-        tinyToJson(mappingsFile)*/
+
         val list = l//dumpClassesToFile(sourcesDir)
-        dumpClassesToFile(sourcesDir, list, "available_members.json")
+        //dumpClassesToFile(sourcesDir, list, "available_members.json")
         //dumpCompanionObjectsToFile(sourcesDir, list, "companion_objects.json")
 
     }
@@ -327,16 +321,41 @@ class FabricBootstrap : ModInitializer {
                     // Safely inspect functions
                     someClass.kotlin.functions
                         .filter {
-                            it.visibility == KVisibility.PUBLIC && (resolveMethodName(it.name)
+                            val filteredParams = if (
+                                it.parameters.isNotEmpty() &&
+                                deepResolveType(it.parameters.first().type.toString()) == someClass.kotlin.qualifiedName
+                            ) {
+                                it.parameters.drop(1)
+                            } else {
+                                it.parameters
+                            }
+                            val resolvedArgs = filteredParams.map { deepResolveType(it.type.toString()) }
+                            it.visibility == KVisibility.PUBLIC && (resolveMethodName(
+                                clazz.name,
+                                it.name,
+                                resolvedArgs
+                            )?.split("(")
+                                ?.get(0)
                                 ?: it.name) !in objectClassMethods
                         }
                         .forEach { method ->
-                            val methodName = resolveMethodName(method.name) ?: method.name
+                            val filteredParams = if (
+                                method.parameters.isNotEmpty() &&
+                                deepResolveType(method.parameters.first().type.toString()) == someClass.kotlin.qualifiedName
+                            ) {
+                                method.parameters.drop(1)
+                            } else {
+                                method.parameters
+                            }
+                            val resolvedArgs = filteredParams.map { deepResolveType(it.type.toString()) }
+                            val methodName = resolveMethodName(clazz.name, method.name, resolvedArgs)?.split("(")
+                                ?.get(0) ?: method.name
                             val returnType = deepResolveType(method.returnType.toString())
 
                             val methodEntry = mutableMapOf<String, Any>()
 
-                            val isOperator = resolveMethodName(method.name) == "invoke" &&
+                            val isOperator = resolveMethodName(clazz.name, method.name, resolvedArgs)?.split("(")
+                                ?.get(0) == "invoke" &&
                                     method.parameters.count { it.kind == KParameter.Kind.VALUE } == 0 &&
                                     method.isOperator
 
@@ -346,14 +365,6 @@ class FabricBootstrap : ModInitializer {
 
                             methodEntry["returns"] = returnType
 
-                            val filteredParams = if (
-                                method.parameters.isNotEmpty() &&
-                                deepResolveType(method.parameters.first().type.toString()) == someClass.kotlin.qualifiedName
-                            ) {
-                                method.parameters.drop(1)
-                            } else {
-                                method.parameters
-                            }
 
                             if (filteredParams.isNotEmpty()) {
                                 methodEntry["args"] = filteredParams.map { deepResolveType(it.type.toString()) }
@@ -374,7 +385,7 @@ class FabricBootstrap : ModInitializer {
                         .forEach { field ->
                             val fieldEntry = mutableMapOf<String, Any>()
 
-                            val resolvedFieldName = resolveFieldName(field.name) ?: field.name
+                            val resolvedFieldName = resolveFieldName(clazz.name, field.name) ?: field.name
                             val resolvedType = deepResolveType(field.returnType.toString())
 
                             fieldEntry["type"] = resolvedType
@@ -1410,23 +1421,32 @@ class FabricBootstrap : ModInitializer {
 
                     clazz.methodInfo
                         .filter { method ->
-                            val deobfMethod = resolveMethodName(method.name) ?: method.name
-                            !deobfMethod.contains("$") && deobfMethod !in objectClassMethods
-                        }
-                        .forEach { method ->
-                            val deobfMethodName = resolveMethodName(method.name) ?: method.name
-
-                            val methodEntry = mutableMapOf<String, Any>()
-
-                            val resolvedReturnType = method.typeSignatureOrTypeDescriptor?.resultType?.toString()
-                                ?.let { deepResolveType(it) } ?: "Unit"
-
                             val resolvedArgs = method.parameterInfo
                                 .mapNotNull { param ->
                                     val raw = param.typeSignatureOrTypeDescriptor.toString()
                                     deepResolveType(raw)
                                 }
                                 .sorted()
+                            val deobfMethod = resolveMethodName(clazz.name, method.name, resolvedArgs)?.split("(")
+                                ?.get(0) ?: method.name
+                            !deobfMethod.contains("$") && deobfMethod !in objectClassMethods
+                        }
+                        .forEach { method ->
+                            val resolvedArgs = method.parameterInfo
+                                .mapNotNull { param ->
+                                    val raw = param.typeSignatureOrTypeDescriptor.toString()
+                                    deepResolveType(raw)
+                                }
+                                .sorted()
+                            val deobfMethodName =
+                                resolveMethodName(clazz.name, method.name, resolvedArgs)?.split("(")
+                                    ?.get(0) ?: method.name
+
+                            val methodEntry = mutableMapOf<String, Any>()
+
+                            val resolvedReturnType = method.typeSignatureOrTypeDescriptor?.resultType?.toString()
+                                ?.let { deepResolveType(it) } ?: "Unit"
+
 
                             if (resolvedArgs.isNotEmpty()) methodEntry["args"] = resolvedArgs
 
@@ -1444,11 +1464,21 @@ class FabricBootstrap : ModInitializer {
                                     val hasOperatorInvoke = runCatching {
                                         val kclass = someClass.kotlin
                                         kclass.members.any {
-                                            it is KFunction<*> && resolveMethodName(it.name) == "invoke" && it.isOperator
+                                            it is KFunction<*> && resolveMethodName(
+                                                clazz.name,
+                                                it.name,
+                                                resolvedArgs
+                                            )?.split("(")
+                                                ?.get(0) == "invoke" && it.isOperator
                                         }
                                     }.getOrElse {
                                         someClass.methods.any {
-                                            resolveMethodName(it.name) == "invoke" && it.parameterCount >= 0 && !method.isStatic
+                                            resolveMethodName(
+                                                clazz.name,
+                                                it.name,
+                                                resolvedArgs
+                                            )?.split("(")
+                                                ?.get(0) == "invoke" && it.parameterCount >= 0 && !method.isStatic
                                         }
                                     }
                                     if (hasOperatorInvoke) methodEntry["isInvokeOperator"] = true
@@ -1462,13 +1492,13 @@ class FabricBootstrap : ModInitializer {
 
                     clazz.fieldInfo
                         .filter { field ->
-                            val deobfFieldName = resolveFieldName(field.name) ?: field.name
+                            val deobfFieldName = resolveFieldName(clazz.name, field.name) ?: field.name
                             val deobfClassNameForField = resolveClassName(field.className) ?: field.className
                             val thisDeobfClassName = resolveClassName(clazz.name) ?: clazz.name
                             !deobfFieldName.contains("$") && deobfClassNameForField == thisDeobfClassName
                         }
                         .forEach { field ->
-                            val deobfFieldName = resolveFieldName(field.name) ?: field.name
+                            val deobfFieldName = resolveFieldName(clazz.name, field.name) ?: field.name
                             val resolvedFieldType = deepResolveType(extractGenericType(field))
 
                             val fieldEntry = mutableMapOf<String, Any>()
