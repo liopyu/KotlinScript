@@ -75,7 +75,9 @@ fun saveMappingsToJson() {
         "obfToDeobfClassMap" to obfToDeobfClassMap,
         "obfToDeobfMethodMap" to obfToDeobfMethodMap,
         "obfToDeobfFieldMap" to obfToDeobfFieldMap,
+        "deobfFieldTypeMap" to deobfFieldTypeMap
     )
+
     val file = getDevMappingFile()
     file.writeText(gson.toJson(data))
 }
@@ -98,16 +100,21 @@ fun loadMappingsFromResource() {
         if (!data.containsKey(key)) logger.warn("$key missing from mappings.json!")
     }
 
-    // Helper
     fun <T> parseMap(key: String, token: java.lang.reflect.Type): T {
         val jsonObj = gson.toJson(data[key] ?: emptyMap<String, Any>())
         return gson.fromJson(jsonObj, token) ?: throw IllegalStateException("Failed to parse $key from mappings.json")
     }
 
-    // Parse all the maps
     val classMapType = object : TypeToken<Map<String, String>>() {}.type
     val methodMapType = object : TypeToken<Map<String, Map<String, String>>>() {}.type
 
+    deobfFieldTypeMap.clear()
+    runCatching {
+        parseMap<Map<String, Map<String, String>>>("deobfFieldTypeMap", methodMapType)
+            .forEach { (k, v) -> deobfFieldTypeMap[k] = v.toMutableMap() }
+    }.onFailure {
+        logger.info("deobfFieldTypeMap missing in mappings.json (ok for legacy).")
+    }
     deobfToObfClassMap.clear()
     deobfToObfClassMap.putAll(parseMap("deobfToObfClassMap", classMapType))
 
@@ -131,6 +138,7 @@ fun loadMappingsFromResource() {
         .forEach { (k, v) -> obfToDeobfFieldMap[k] = v.toMutableMap() }
     rebuildMethodArityIndex()
     rebuildOverloadsFromFlatMap()
+
 }
 
 fun rebuildOverloadsFromFlatMap() {
@@ -183,6 +191,158 @@ fun isDevEnvironment(): Boolean {
         LogUtils.getLogger().info("Im inside a dev environment!")
     return FabricLoader.getInstance().isDevelopmentEnvironment
 }
+
+private fun descToNamedTypeOrNull(desc: String): String? {
+    var d = desc
+    while (d.startsWith("[")) d = d.substring(1)
+    return if (d.startsWith("L") && d.endsWith(";"))
+        d.substring(1, d.length - 1).replace('/', '.')
+    else
+        null
+}
+
+data class ChainRewrite(val line: Int, val from: String, val to: String)
+
+private fun asChain(e: KtExpression): List<KtExpression> {
+    val out = mutableListOf<KtExpression>()
+    fun rec(x: KtExpression) {
+        if (x is KtDotQualifiedExpression) {
+            rec(x.receiverExpression)
+            x.selectorExpression?.let { rec(it) }
+        } else out += x
+    }
+    rec(e)
+    return out
+}
+
+val debugChains = true
+private fun dbg(msg: () -> String) {
+    if (debugChains) logger.info("[KS-chain] ${msg()}")
+}
+
+fun findChainedFieldRewrites(ktFile: KtFile, source: String): Map<Int, List<Pair<String, String>>> {
+    val starts = lineStartsOf(source)
+    fun lineOf(offset: Int) = lineIndexOf(offset, starts)
+
+    val importSimple = mutableMapOf<String, String>()
+    ktFile.importDirectives.forEach {
+        val ip = it.importPath?.pathStr ?: return@forEach
+        importSimple[ip.substringAfterLast('.')] = ip
+    }
+    fun fq(text: String?): String? {
+        if (text.isNullOrBlank()) return null
+        val n = importSimple[text] ?: text
+        return canonicalDeobfClass(n)
+    }
+
+    val varTypes = findVariableTypes(ktFile)
+    val rewritesByLine = mutableMapOf<Int, MutableList<Pair<String, String>>>()
+
+    fun asChain(e: KtExpression): List<KtExpression> {
+        val out = mutableListOf<KtExpression>()
+        fun rec(x: KtExpression) {
+            if (x is KtDotQualifiedExpression) {
+                rec(x.receiverExpression)
+                x.selectorExpression?.let { rec(it) }
+            } else out += x
+        }
+        rec(e)
+        return out
+    }
+
+    ktFile.accept(object : KtTreeVisitorVoid() {
+        override fun visitDotQualifiedExpression(expr: KtDotQualifiedExpression) {
+            super.visitDotQualifiedExpression(expr)
+
+            val parts = asChain(expr)
+            val head = parts.firstOrNull() as? KtNameReferenceExpression ?: return
+            val rootName = head.getReferencedName()
+            val rootDeclType = varTypes[rootName] ?: fq(rootName)
+            val startType = rootDeclType ?: return
+
+            var curDeobfType = canonicalDeobfClass(startType)
+            val curObfType = { deobfToObfClassMap[curDeobfType] }
+
+            dbg { "expr='${expr.text}' root='$rootName' curDeobfType='$curDeobfType' obfType='${curObfType()}'" }
+
+            val outParts = mutableListOf(rootName)
+            var changed = false
+
+            for (i in 1 until parts.size) {
+                val p = parts[i] as? KtNameReferenceExpression ?: break
+                val token = p.getReferencedName()
+
+                val obfFromDeobf = deobfToObfFieldMap[curDeobfType]?.get(token)
+                if (obfFromDeobf != null) {
+                    outParts += obfFromDeobf
+                    changed = true
+                    val nextType = deobfFieldTypeMap[curDeobfType]?.get(token)
+                    dbg { " step[$i]: deobf field '$token' -> obf '$obfFromDeobf', nextDeobfType='$nextType'" }
+                    if (nextType == null) break
+                    curDeobfType = canonicalDeobfClass(nextType)
+                    continue
+                }
+
+                val obfOwner = curObfType()
+                val deobfField = if (obfOwner != null) obfToDeobfFieldMap[obfOwner]?.get(token) else null
+                if (deobfField != null) {
+                    outParts += token
+                    val nextType = deobfFieldTypeMap[curDeobfType]?.get(deobfField)
+                    dbg { " step[$i]: obf field '$token' (deobf='$deobfField'), nextDeobfType='$nextType'" }
+                    if (nextType == null) break
+                    curDeobfType = canonicalDeobfClass(nextType)
+                    continue
+                }
+
+                dbg { " step[$i]: token '$token' did not match fields of '$curDeobfType' (or '${obfOwner}')" }
+                break
+            }
+
+            if (changed) {
+                val from = expr.text
+                val to = outParts.joinToString(".")
+                rewritesByLine.getOrPut(lineOf(expr.textRange.startOffset)) { mutableListOf() }.add(from to to)
+                dbg { " rewrite: '$from' -> '$to'" }
+            } else {
+                dbg { " no rewrite for '${expr.text}'" }
+            }
+        }
+    })
+    return rewritesByLine
+}
+
+fun findVariableTypes(ktFile: KtFile): Map<String, String> {
+    val importSimple = mutableMapOf<String, String>()
+    ktFile.importDirectives.forEach {
+        val ip = it.importPath?.pathStr ?: return@forEach
+        importSimple[ip.substringAfterLast('.')] = ip
+    }
+    val vars = mutableMapOf<String, String>()
+
+    fun fq(text: String?): String? {
+        if (text.isNullOrBlank()) return null
+        val n = importSimple[text] ?: text
+        return canonicalDeobfClass(n)
+    }
+
+    ktFile.accept(object : KtTreeVisitorVoid() {
+        override fun visitNamedFunction(function: KtNamedFunction) {
+            super.visitNamedFunction(function)
+            function.valueParameters.forEach { p ->
+                val t = p.typeReference?.text?.let(::fq) ?: return@forEach
+                vars[p.name ?: return@forEach] = t
+            }
+        }
+
+        override fun visitProperty(property: KtProperty) {
+            super.visitProperty(property)
+            val t = property.typeReference?.text?.let(::fq) ?: return
+            property.name?.let { vars[it] = t }
+        }
+    })
+    return vars
+}
+
 
 val logger = LogUtils.getLogger()
 
@@ -267,6 +427,8 @@ fun buildDeobfToObfMapFromTree(tree: MappingTree, obfNamespace: Int, deobfNamesp
 
         val fieldMap = deobfToObfFieldMap.getOrPut(deobfClass) { mutableMapOf() }
         val obfFieldMap = obfToDeobfFieldMap.getOrPut(obfClass) { mutableMapOf() }
+        val fieldTypesForOwner = deobfFieldTypeMap.getOrPut(deobfClass) { mutableMapOf() }
+
         for (fieldDef in classDef.fields) {
             val fieldNames = mutableListOf<String?>()
             for (i in namespaces.indices) {
@@ -277,8 +439,21 @@ fun buildDeobfToObfMapFromTree(tree: MappingTree, obfNamespace: Int, deobfNamesp
                 }
                 fieldNames.add(n)
             }
+
             val obfField = if (obfNamespace < fieldNames.size) fieldNames[obfNamespace] else null
             val deobfField = if (deobfNamespace < fieldNames.size) fieldNames[deobfNamespace] else null
+
+            val deobfDesc = try {
+                fieldDef.getDesc(deobfNamespace)
+            } catch (_: Exception) {
+                null
+            }
+            if (deobfField != null && deobfDesc != null) {
+                jvmFieldDescToClassName(deobfDesc)?.let { t ->
+                    fieldTypesForOwner[deobfField] = canonicalDeobfClass(t)
+                }
+            }
+
             if (obfField != null && deobfField != null) {
                 fieldMap[deobfField] = obfField
                 obfFieldMap[obfField] = deobfField
@@ -429,6 +604,16 @@ fun resolveObfMethodName(className: String, methodName: String, args: List<Strin
 }
 
 val deobfToObfMethodByArity: MutableMap<String, MutableMap<String, MutableMap<Int, String>>> = mutableMapOf()
+val deobfFieldTypeMap: MutableMap<String, MutableMap<String, String>> = mutableMapOf()
+private fun jvmFieldDescToClassName(desc: String): String? {
+    var i = 0
+    while (i < desc.length && desc[i] == '[') i++
+    return if (i < desc.length && desc[i] == 'L') {
+        val end = desc.indexOf(';', i)
+        if (end > i) desc.substring(i + 1, end).replace('/', '.') else null
+    } else null
+}
+
 
 private fun countParams(desc: String): Int {
     var i = desc.indexOf('(') + 1
@@ -489,31 +674,99 @@ private fun literalHint(expr: KtExpression): String {
     }
 }
 
-data class MethodUse(val className: String, val method: String, val arity: Int, val hints: List<String>)
+private fun resolveTypeRef(text: String, imports: Map<String, String>): String {
+    val parts = text.split('.')
+    if (parts.size == 1) {
+        val fq = imports[text] ?: text
+        return canonicalDeobfClass(fq)
+    }
+    val outerSimple = parts.first()
+    val outerFq = imports[outerSimple] ?: outerSimple
+    val nested = buildString {
+        append(outerFq)
+        for (i in 1 until parts.size) append('$').append(parts[i])
+    }
+    return canonicalDeobfClass(nested)
+}
 
-fun findMethodUsages(
-    ktFile: KtFile
-): Set<MethodUse> {
+private fun resolveCtorType(expr: KtCallExpression, imports: Map<String, String>): String? {
+    val callee = expr.calleeExpression ?: return null
+    return when (callee) {
+        is KtNameReferenceExpression -> resolveTypeRef(callee.getReferencedName(), imports)
+        is KtDotQualifiedExpression -> resolveTypeRef(callee.text, imports)
+        else -> null
+    }
+}
+
+data class MethodUse(val className: String, val method: String, val arity: Int, val hints: List<String>)
+private class TypeEnv {
+    private val stack = ArrayDeque<MutableMap<String, String>>()
+    fun push() = stack.addLast(mutableMapOf())
+    fun pop() {
+        stack.removeLast()
+    }
+
+    fun put(name: String, deobfFqcn: String) {
+        stack.last()[name] = deobfFqcn
+    }
+
+    fun get(name: String): String? = stack.asReversed().firstNotNullOfOrNull { it[name] }
+}
+
+fun findMethodUsages(ktFile: KtFile): Set<MethodUse> {
     val found = mutableSetOf<MethodUse>()
     val importSimpleNameMap = mutableMapOf<String, String>()
     ktFile.importDirectives.forEach {
-        val importPath = it.importPath?.pathStr ?: return@forEach
-        importSimpleNameMap[importPath.substringAfterLast('.')] = importPath
+        val p = it.importPath?.pathStr ?: return@forEach
+        importSimpleNameMap[p.substringAfterLast('.')] = p
     }
 
+    val env = TypeEnv()
+    env.push()
+
     ktFile.accept(object : KtTreeVisitorVoid() {
+
+        override fun visitNamedFunction(function: KtNamedFunction) {
+            env.push()
+            function.valueParameters.forEach { p ->
+                val t = p.typeReference?.text ?: return@forEach
+                val fq = resolveTypeRef(t, importSimpleNameMap)
+                p.name?.let { env.put(it, fq) }
+            }
+            super.visitNamedFunction(function)
+            env.pop()
+        }
+
+        override fun visitProperty(property: KtProperty) {
+            property.typeReference?.text?.let { t ->
+                val fq = resolveTypeRef(t, importSimpleNameMap)
+                property.name?.let { env.put(it, fq) }
+            } ?: run {
+                val init = property.initializer as? KtCallExpression
+                val fq = init?.let { resolveCtorType(it, importSimpleNameMap) }
+                if (fq != null) property.name?.let { env.put(it, fq) }
+            }
+            super.visitProperty(property)
+        }
+
         override fun visitCallExpression(expr: KtCallExpression) {
             super.visitCallExpression(expr)
             val callee = expr.calleeExpression as? KtSimpleNameExpression ?: return
             val methodName = callee.getReferencedName()
-            val dot = expr.parent as? KtDotQualifiedExpression
-            val qualifierText = dot?.receiverExpression?.text
+            val dot = expr.parent as? KtDotQualifiedExpression ?: return
+            val qualifierExpr = dot.receiverExpression
 
-            val possibleClassNames = mutableListOf<String>()
-            if (qualifierText != null) {
-                deobfToObfClassMap[qualifierText]?.let { possibleClassNames.add(qualifierText) }
-                importSimpleNameMap[qualifierText]?.let { possibleClassNames.add(it) }
-                possibleClassNames.add(qualifierText)
+            val candidates = mutableListOf<String>()
+            when (qualifierExpr) {
+                is KtNameReferenceExpression -> {
+                    val qn = qualifierExpr.getReferencedName()
+                    importSimpleNameMap[qn]?.let { candidates += canonicalDeobfClass(it) }
+                    if (deobfToObfClassMap.containsKey(qn)) candidates += canonicalDeobfClass(qn)
+                }
+
+                is KtDotQualifiedExpression -> {
+                    candidates += canonicalDeobfClass(qualifierExpr.text)
+                }
             }
 
             val hints = expr.valueArguments.map { a ->
@@ -525,24 +778,23 @@ fun findMethodUsages(
             val arity = hints.size
 
             var added = false
-            for (cn in possibleClassNames) {
-                val named = canonicalDeobfClass(cn)
-                val hasName = deobfMethodOverloads[named]?.containsKey(methodName) == true
-                val hasArity = deobfToObfMethodByArity[named]?.get(methodName)?.isNotEmpty() == true
+            for (owner in candidates) {
+                val hasName = deobfMethodOverloads[owner]?.containsKey(methodName) == true
+                val hasArity = deobfToObfMethodByArity[owner]?.get(methodName)?.isNotEmpty() == true
                 if (hasName || hasArity) {
-                    found += MethodUse(named, methodName, arity, hints)
+                    found += MethodUse(owner, methodName, arity, hints)
                     added = true
                     break
                 }
             }
-            if (!added && qualifierText != null) {
-                val named = canonicalDeobfClass(qualifierText)
-                if (deobfMethodOverloads[named]?.containsKey(methodName) == true) {
-                    found += MethodUse(named, methodName, arity, hints)
-                }
+            if (!added && candidates.isNotEmpty()) {
+                found += MethodUse(candidates.first(), methodName, arity, hints)
             }
         }
+
     })
+
+    env.pop()
     return found
 }
 
@@ -892,6 +1144,8 @@ class TestParser {
             traceAll(ktFile, logger)
             val qualifierMap = buildImportQualifierMap(ktFile)
             val protectedByLine = collectProtectedRangesByLine(ktFile, string)
+            val chained = findChainedFieldRewrites(ktFile, string)
+
             val result = replaceObfuscated(
                 string,
                 foundClasses,
@@ -900,8 +1154,10 @@ class TestParser {
                 nested,
                 overrideRenames,
                 protectedByLine,
-                qualifierMap
+                qualifierMap,
+                chained
             )
+
 
             logger.info(
                 "getInstance map: " + deobfToObfMethodByArity["net.minecraft.client.Minecraft"]?.get("getInstance")
@@ -958,9 +1214,14 @@ class TestParser {
                     super.visitUserType(type)
                     val inner = type.referencedName ?: return
                     val q = type.qualifier as? KtUserType ?: return
-                    val outer = q.text
-                    val obfNested = resolveObfNestedFromAnyOuter(outer, inner) ?: return
-                    addAllSpellings(repl, outer, inner, obfNested)
+                    val outer = q.referencedName ?: return
+                    val outerFq = importSimple[outer] ?: outer
+                    val deobfNested = "$outerFq$$inner"
+                    val obf = deobfToObfClassMap[deobfNested]
+                    if (obf != null) {
+                        repl["$outer.$inner"] = obf.replace('$', '.')
+                        repl[inner] = obf.replace('$', '.')
+                    }
                 }
 
                 override fun visitCallExpression(expr: KtCallExpression) {
@@ -1021,43 +1282,97 @@ class TestParser {
             return found
         }
 
-
-        fun findFieldUsages(
-            ktFile: KtFile
-        ): Set<Pair<String, String>> {
+        fun findFieldUsages(ktFile: KtFile): Set<Pair<String, String>> {
             val foundFields = mutableSetOf<Pair<String, String>>()
+
             val importSimpleNameMap = mutableMapOf<String, String>()
             ktFile.importDirectives.forEach {
-                val importPath = it.importPath?.pathStr
-                if (importPath != null) {
-                    importSimpleNameMap[importPath.substringAfterLast('.')] = importPath
-                }
+                val ip = it.importPath?.pathStr ?: return@forEach
+                importSimpleNameMap[ip.substringAfterLast('.')] = ip
             }
-            ktFile.accept(object : KtTreeVisitorVoid() {
-                override fun visitDotQualifiedExpression(expr: KtDotQualifiedExpression) {
-                    super.visitDotQualifiedExpression(expr)
-                    val selector = expr.selectorExpression as? KtSimpleNameExpression ?: return
-                    val fieldName = selector.getReferencedName()
-                    val qualifierText = expr.receiverExpression.text
 
-                    val possibleClassNames = buildList {
-                        importSimpleNameMap[qualifierText]?.let { add(it) }
-                        deobfToObfClassMap[qualifierText]?.let { add(it) }
-                        if (qualifierText.startsWith("net.minecraft.class_")) add(qualifierText)
-                        add(qualifierText)
+            fun resolveSimpleType(t: String): String = importSimpleNameMap[t] ?: t
+            fun resolveExprDeobfType(expr: KtExpression, env: Map<String, String>): String? {
+                return when (expr) {
+                    is KtNameReferenceExpression -> {
+                        val nm = expr.getReferencedName()
+                        env[nm] ?: resolveSimpleType(nm).let { canonicalDeobfClass(it) }
+                            .takeIf { deobfToObfClassMap.containsKey(it) || obfToDeobfClassMap.containsKey(it) }
                     }
 
-                    for (className in possibleClassNames) {
-                        val fieldMap = deobfToObfFieldMap[className]
-                        if (fieldMap?.containsKey(fieldName) == true) {
-                            foundFields += className to fieldName
-                            break
+                    is KtDotQualifiedExpression -> {
+                        val ownerType = resolveExprDeobfType(expr.receiverExpression, env) ?: return null
+                        val sel = expr.selectorExpression
+                        when (sel) {
+                            is KtSimpleNameExpression -> {
+                                val fieldName = sel.getReferencedName()
+                                val nextType = deobfFieldTypeMap[ownerType]?.get(fieldName)
+                                nextType?.let(::canonicalDeobfClass)
+                            }
+
+                            is KtCallExpression -> {
+                                null
+                            }
+
+                            else -> null
                         }
+                    }
+
+                    else -> null
+                }
+            }
+
+            ktFile.accept(object : KtTreeVisitorVoid() {
+                private var paramEnv: Map<String, String> = emptyMap()
+
+                override fun visitNamedFunction(function: KtNamedFunction) {
+                    val saved = paramEnv
+                    paramEnv = buildMap {
+                        function.valueParameters.forEach { p ->
+                            val t = p.typeReference?.text ?: return@forEach
+                            val fq = canonicalDeobfClass(resolveSimpleType(t))
+                            val name = p.name ?: return@forEach
+                            put(name, fq)
+                        }
+                    }
+                    super.visitNamedFunction(function)
+                    paramEnv = saved
+                }
+
+                override fun visitDotQualifiedExpression(expr: KtDotQualifiedExpression) {
+                    super.visitDotQualifiedExpression(expr)
+
+                    val selector = expr.selectorExpression as? KtSimpleNameExpression ?: return
+                    val fieldName = selector.getReferencedName()
+
+                    run {
+                        val qualifierText = expr.receiverExpression.text
+                        val possibleOwners = buildList {
+                            importSimpleNameMap[qualifierText]?.let { add(it) }
+                            deobfToObfClassMap[qualifierText]?.let { add(it) }
+                            if (qualifierText.startsWith("net.minecraft.class_")) add(qualifierText)
+                            add(qualifierText)
+                        }
+                        for (owner in possibleOwners) {
+                            val fieldMap = deobfToObfFieldMap[owner]
+                            if (fieldMap?.containsKey(fieldName) == true) {
+                                foundFields += owner to fieldName
+                                return
+                            }
+                        }
+                    }
+
+                    val ownerType = resolveExprDeobfType(expr.receiverExpression, paramEnv) ?: return
+                    val fieldMap = deobfToObfFieldMap[ownerType]
+                    if (fieldMap?.containsKey(fieldName) == true) {
+                        foundFields += ownerType to fieldName
                     }
                 }
             })
+
             return foundFields
         }
+
 
         fun replaceObfuscated(
             source: String,
@@ -1067,13 +1382,20 @@ class TestParser {
             nestedQualifiedClassReplacements: Map<String, String>,
             overrideRenameMap: Map<String, String>,
             protectedByLine: Map<Int, List<IntRange>>,
-            importQualifierMap: Map<String, String>
+            importQualifierMap: Map<String, String>,
+            chainedFieldRewritesByLine: Map<Int, List<Pair<String, String>>>
         ): String {
             val lines = source.lines().toMutableList()
             for (i in lines.indices) {
                 val prot = protectedByLine[i] ?: emptyList()
                 var line = lines[i]
-
+                chainedFieldRewritesByLine[i]
+                    ?.sortedByDescending { it.first.length }
+                    ?.forEach { (from, to) ->
+                        dbg { "apply line[$i]: '$from' -> '$to'  (before='${line.trim()}')" }
+                        line = safeReplaceLine(line, prot, Regex("""\b${Regex.escape(from)}\b"""), to)
+                        dbg { "apply line[$i]: after='${line.trim()}'" }
+                    }
                 val importMatch = Regex("""^\s*import\s+(.+)$""").matchEntire(line.trim())
                 if (importMatch != null) {
                     val importPath = importMatch.groupValues[1].trim()
