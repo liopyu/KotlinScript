@@ -27,7 +27,6 @@ class SimpleScreen : Screen(Component.literal("Simple Screen")) {
 
 class SomeEnderEyeItem(settings: Item.Properties) : EnderEyeItem(settings) {
     override fun use(level: Level, player: Player, hand: InteractionHand): InteractionResultHolder<ItemStack> {
-        player.abilities.mayfly
         return super.use(level, player, hand)
     }
 }

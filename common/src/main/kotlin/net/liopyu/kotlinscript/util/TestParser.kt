@@ -215,9 +215,163 @@ private fun asChain(e: KtExpression): List<KtExpression> {
     return out
 }
 
+private fun nextTypeAfterField(ownerDeobf: String, deobfField: String): String? {
+    deobfFieldTypeMap[ownerDeobf]?.get(deobfField)?.let { return it }
+    return deobfFieldTypeMap[canonicalDeobfClass(ownerDeobf)]?.get(deobfField)
+}
+
 val debugChains = true
+var debugMethods = true
+
+private fun mdbg(msg: () -> String) {
+    if (debugMethods) logger.info("[KS-method] ${msg()}")
+}
+
 private fun dbg(msg: () -> String) {
     if (debugChains) logger.info("[KS-chain] ${msg()}")
+}
+
+private fun tryLoadAny(name: String): Class<*>? {
+    val cl = TestParser::class.java.classLoader
+    var c: Class<*>? = null
+    if (c == null) c = runCatching { Class.forName(name, false, cl) }.getOrNull()
+    if (c == null) c = runCatching { Class.forName(name.replace('.', '$'), false, cl) }.getOrNull()
+    if (c == null) c = runCatching { Class.forName(name.replace('$', '.'), false, cl) }.getOrNull()
+    return c
+}
+
+private fun findFieldInHierarchy(c0: Class<*>, name: String): java.lang.reflect.Field? {
+    var c: Class<*>? = c0
+    while (c != null) {
+        val clazz = c
+        val f = runCatching { clazz.getDeclaredField(name) }.getOrNull()
+        if (f != null) return f
+        c = clazz.superclass
+    }
+    return null
+}
+
+/** Discover the next deobf type for ownerDeobf.deobfField using reflection on the obf class. */
+private fun reflectDeobfFieldType(ownerDeobf: String, deobfField: String): String? {
+    val obfOwner = deobfToObfClassMap[ownerDeobf] ?: return null
+    val obfField = deobfToObfFieldMap[ownerDeobf]?.get(deobfField) ?: return null
+
+    obfFieldTypeDeobfMap[obfOwner]?.get(obfField)?.let { return it }
+
+    val cls = tryLoadAny(obfOwner) ?: return null
+    val fld = findFieldInHierarchy(cls, obfField) ?: return null
+
+    val obfType = fld.type.name
+    val deobfNonNull: String =
+        obfToDeobfClassMap[obfType]
+            ?: obfToDeobfClassMap[obfType.replace('$', '.')]
+            ?: obfType
+
+    val canon = canonicalDeobfClass(deobfNonNull)
+
+    deobfFieldTypeMap.getOrPut(ownerDeobf) { mutableMapOf() }[deobfField] = canon
+    obfFieldTypeDeobfMap.getOrPut(obfOwner) { mutableMapOf() }[obfField] = canon
+
+    return canon
+}
+
+private fun jvmMethodReturnToClassName(desc: String): String? {
+    val rp = desc.indexOf(')')
+    if (rp < 0 || rp + 1 >= desc.length) return null
+    var i = rp + 1
+    while (i < desc.length && desc[i] == '[') i++
+    return if (i < desc.length && desc[i] == 'L') {
+        val end = desc.indexOf(';', i)
+        if (end > i) desc.substring(i + 1, end).replace('/', '.') else null
+    } else null
+}
+
+private fun isObfMethodName(n: String): Boolean = n.startsWith("method_")
+
+private fun paramCount(desc: String): Int = countParams(desc)
+
+private fun deobfRetFromDeobfDesc(desc: String): String? =
+    jvmMethodReturnToClassName(desc)?.let(::canonicalDeobfClass)
+
+private fun deobfRetFromObfDesc(desc: String): String? {
+    val obf = jvmMethodReturnToClassName(desc) ?: return null
+    val named = obfToDeobfClassMap[obf] ?: obfToDeobfClassMap[obf.replace('$', '.')] ?: obf
+    return canonicalDeobfClass(named)
+}
+
+
+private fun deobfMethodReturnType(ownerDeobf: String, methodName: String, arity: Int, hints: List<String>): String? {
+    val list = deobfMethodOverloads[ownerDeobf]?.get(methodName) ?: return null
+    var best: Pair<Int, String?> = -1 to null
+    for ((desc, _) in list) {
+        val ps = paramTypes(desc)
+        if (ps.size != arity) continue
+        var score = 0
+        for (i in 0 until minOf(hints.size, ps.size)) {
+            val h = hints[i]
+            if (h.isNotEmpty() && ps[i].contains(h)) score += 3
+        }
+        if (score > best.first) best = score to jvmMethodReturnToClassName(desc)
+    }
+    return best.second?.let(::canonicalDeobfClass)
+}
+
+private fun obfMethodReturnType(ownerDeobf: String, obfMethod: String, arity: Int, hints: List<String>): String? {
+    val obfOwner = deobfToObfClassMap[ownerDeobf] ?: return null
+    val table = obfToDeobfMethodMap[obfOwner] ?: return null
+
+    var bestScore = -1
+    var bestRet: String? = null
+
+    for ((key, _) in table) {
+        if (!key.startsWith("$obfMethod(")) continue
+        val desc = key.substring(obfMethod.length)
+        if (countParams(desc) != arity) continue
+
+        val ps = paramTypes(desc)
+        var score = 0
+        for (i in 0 until minOf(hints.size, ps.size)) {
+            val h = hints[i]
+            if (h.isNotEmpty() && ps[i].contains(h)) score += 3
+        }
+
+        if (score >= bestScore) {
+            bestScore = score
+            val retObf = jvmMethodReturnToClassName(desc)
+            bestRet = when {
+                retObf == null -> null
+                else -> {
+                    val named = obfToDeobfClassMap[retObf]
+                        ?: obfToDeobfClassMap[retObf.replace('$', '.')]
+                        ?: retObf
+                    canonicalDeobfClass(named)
+                }
+            }
+        }
+    }
+    return bestRet
+}
+
+private fun argHints(call: KtCallExpression, imports: Map<String, String>): List<String> {
+    val out = ArrayList<String>(call.valueArguments.size)
+    var i = 0
+    while (i < call.valueArguments.size) {
+        val ex = call.valueArguments[i].getArgumentExpression()
+        val h = when (ex) {
+            is KtStringTemplateExpression -> "java/lang/String"
+            is KtConstantExpression -> when (ex.text.lowercase()) {
+                "true", "false" -> "Z"
+                else -> if (ex.text.contains('.')) "D" else "I"
+            }
+
+            is KtNameReferenceExpression -> ex.getReferencedName()
+            is KtCallExpression -> resolveCtorType(ex, imports)?.replace('.', '/')
+            else -> ""
+        } ?: ""
+        out += h
+        i++
+    }
+    return out
 }
 
 fun findChainedFieldRewrites(ktFile: KtFile, source: String): Map<Int, List<Pair<String, String>>> {
@@ -255,42 +409,116 @@ fun findChainedFieldRewrites(ktFile: KtFile, source: String): Map<Int, List<Pair
             super.visitDotQualifiedExpression(expr)
 
             val parts = asChain(expr)
-            val head = parts.firstOrNull() as? KtNameReferenceExpression ?: return
-            val rootName = head.getReferencedName()
-            val rootDeclType = varTypes[rootName] ?: fq(rootName)
-            val startType = rootDeclType ?: return
+            if (parts.isEmpty()) return
+
+            val headExpr = parts[0]
+            var outHeadText: String? = null
+            var startType: String? = null
+
+            when (headExpr) {
+                is KtNameReferenceExpression -> {
+                    val rootName = headExpr.getReferencedName()
+                    val t = varTypes[rootName] ?: fq(rootName)
+                    startType = t
+                    outHeadText = rootName
+                }
+
+                is KtCallExpression -> {
+                    val t = resolveCtorType(headExpr, importSimple)
+                    startType = t
+                    outHeadText = headExpr.text
+                }
+
+                is KtDotQualifiedExpression -> {
+                    val t = canonicalDeobfClass(headExpr.text)
+                    startType = t
+                    outHeadText = headExpr.text
+                }
+
+                else -> return
+            }
+
+            if (startType == null || outHeadText == null) return
 
             var curDeobfType = canonicalDeobfClass(startType)
             val curObfType = { deobfToObfClassMap[curDeobfType] }
 
-            dbg { "expr='${expr.text}' root='$rootName' curDeobfType='$curDeobfType' obfType='${curObfType()}'" }
+            dbg { "expr='${expr.text}' head='${headExpr.text}' curDeobfType='$curDeobfType' obfType='${curObfType()}'" }
 
-            val outParts = mutableListOf(rootName)
+            val outParts = ArrayList<String>()
+            outParts.add(outHeadText!!)
             var changed = false
 
-            for (i in 1 until parts.size) {
-                val p = parts[i] as? KtNameReferenceExpression ?: break
-                val token = p.getReferencedName()
+            var i = 1
+            while (i < parts.size) {
+                val nameRef = parts[i] as? KtNameReferenceExpression
+                if (nameRef == null) {
+                    val call = parts[i] as? KtCallExpression
+                    if (call != null) {
+                        val callee = call.calleeExpression as? KtSimpleNameExpression ?: break
+                        val mn = callee.getReferencedName()
+                        val hints = argHints(call, importSimple)
+                        val arity = hints.size
 
-                val obfFromDeobf = deobfToObfFieldMap[curDeobfType]?.get(token)
+                        val pick = strongPickOnOwner(curDeobfType, mn, arity, hints)
+                        outParts += call.text
+                        dbg { " step[$i]: call '$mn/$arity' owner='$curDeobfType' -> next='${pick.retDeobf ?: "void"}'" }
+
+                        if (pick.retDeobf == null) {
+                            var j = i + 1
+                            while (j < parts.size) {
+                                outParts += parts[j].text; j++
+                            }
+                            break
+                        }
+
+                        curDeobfType = canonicalDeobfClass(pick.retDeobf)
+                        i++
+                        continue
+                    }
+                    break
+                }
+
+                val token = nameRef.getReferencedName()
+
+                val m = deobfToObfFieldMap[curDeobfType]
+                val obfFromDeobf = m?.get(token)
                 if (obfFromDeobf != null) {
-                    outParts += obfFromDeobf
+                    outParts.add(obfFromDeobf)
                     changed = true
-                    val nextType = deobfFieldTypeMap[curDeobfType]?.get(token)
-                    dbg { " step[$i]: deobf field '$token' -> obf '$obfFromDeobf', nextDeobfType='$nextType'" }
-                    if (nextType == null) break
-                    curDeobfType = canonicalDeobfClass(nextType)
-                    continue
+
+                    var next = nextTypeAfterField(curDeobfType, token)
+                    if (next == null) next = reflectDeobfFieldType(curDeobfType, token)
+
+                    dbg { " step[$i]: deobf field '$token' -> obf '$obfFromDeobf', nextDeobfType='${next ?: "null"}'" }
+
+                    if (next == null) {
+                        var j = i + 1
+                        while (j < parts.size) {
+                            outParts += parts[j].text; j++
+                        }
+                        break
+                    } else {
+                        curDeobfType = canonicalDeobfClass(next)
+                        i++
+                        continue
+                    }
                 }
 
                 val obfOwner = curObfType()
-                val deobfField = if (obfOwner != null) obfToDeobfFieldMap[obfOwner]?.get(token) else null
+                var deobfField: String? = null
+                if (obfOwner != null) {
+                    val back = obfToDeobfFieldMap[obfOwner]
+                    if (back != null) deobfField = back[token]
+                }
                 if (deobfField != null) {
-                    outParts += token
-                    val nextType = deobfFieldTypeMap[curDeobfType]?.get(deobfField)
-                    dbg { " step[$i]: obf field '$token' (deobf='$deobfField'), nextDeobfType='$nextType'" }
-                    if (nextType == null) break
-                    curDeobfType = canonicalDeobfClass(nextType)
+                    outParts.add(token)
+                    var next = deobfFieldTypeMap[curDeobfType]?.get(deobfField)
+                    if (next == null) next = reflectDeobfFieldType(curDeobfType, deobfField)
+                    dbg { " step[$i]: obf field '$token' (deobf='$deobfField'), nextDeobfType='${next ?: "null"}'" }
+                    if (next == null) break
+                    curDeobfType = canonicalDeobfClass(next)
+                    i++
                     continue
                 }
 
@@ -301,7 +529,9 @@ fun findChainedFieldRewrites(ktFile: KtFile, source: String): Map<Int, List<Pair
             if (changed) {
                 val from = expr.text
                 val to = outParts.joinToString(".")
-                rewritesByLine.getOrPut(lineOf(expr.textRange.startOffset)) { mutableListOf() }.add(from to to)
+                val lineIdx = lineOf(expr.textRange.startOffset)
+                val list = rewritesByLine.getOrPut(lineIdx) { mutableListOf() }
+                list.add(from to to)
                 dbg { " rewrite: '$from' -> '$to'" }
             } else {
                 dbg { " no rewrite for '${expr.text}'" }
@@ -353,6 +583,7 @@ val deobfToObfFieldMap: MutableMap<String, MutableMap<String, String>> = mutable
 val obfToDeobfClassMap: MutableMap<String, String> = mutableMapOf()
 val obfToDeobfMethodMap: MutableMap<String, MutableMap<String, String>> = mutableMapOf()
 val obfToDeobfFieldMap: MutableMap<String, MutableMap<String, String>> = mutableMapOf()
+val obfFieldTypeDeobfMap: MutableMap<String, MutableMap<String, String>> = mutableMapOf()
 fun buildDeobfToObfMapFromTree(tree: MappingTree, obfNamespace: Int, deobfNamespace: Int) {
     val namespaces = listOf(tree.srcNamespace) + tree.dstNamespaces
     var classCount = 0
@@ -384,7 +615,9 @@ fun buildDeobfToObfMapFromTree(tree: MappingTree, obfNamespace: Int, deobfNamesp
             deobfToObfClassMap[deobfClass.substringAfterLast('$')] = obfClass
         }
         obfToDeobfClassMap[obfClass] = deobfClass
-
+        if ('$' in obfClass) {
+            obfToDeobfClassMap[obfClass.replace('$', '.')] = deobfClass
+        }
         val methodMap = deobfToObfMethodMap.getOrPut(deobfClass) { mutableMapOf() }
         val obfMethodMap = obfToDeobfMethodMap.getOrPut(obfClass) { mutableMapOf() }
         val arityIndex = deobfToObfMethodByArity.getOrPut(deobfClass) { mutableMapOf() }
@@ -429,6 +662,7 @@ fun buildDeobfToObfMapFromTree(tree: MappingTree, obfNamespace: Int, deobfNamesp
         val obfFieldMap = obfToDeobfFieldMap.getOrPut(obfClass) { mutableMapOf() }
         val fieldTypesForOwner = deobfFieldTypeMap.getOrPut(deobfClass) { mutableMapOf() }
 
+
         for (fieldDef in classDef.fields) {
             val fieldNames = mutableListOf<String?>()
             for (i in namespaces.indices) {
@@ -439,20 +673,36 @@ fun buildDeobfToObfMapFromTree(tree: MappingTree, obfNamespace: Int, deobfNamesp
                 }
                 fieldNames.add(n)
             }
-
             val obfField = if (obfNamespace < fieldNames.size) fieldNames[obfNamespace] else null
             val deobfField = if (deobfNamespace < fieldNames.size) fieldNames[deobfNamespace] else null
 
-            val deobfDesc = try {
-                fieldDef.getDesc(deobfNamespace)
-            } catch (_: Exception) {
-                null
+            var namedType: String? = runCatching { fieldDef.getDesc(deobfNamespace) }.getOrNull()?.let { d ->
+                jvmFieldDescToClassName(d)
             }
-            if (deobfField != null && deobfDesc != null) {
-                jvmFieldDescToClassName(deobfDesc)?.let { t ->
-                    fieldTypesForOwner[deobfField] = canonicalDeobfClass(t)
+
+            if (namedType == null) {
+                val obfDesc = runCatching { fieldDef.getDesc(obfNamespace) }.getOrNull()
+                if (obfDesc != null) {
+                    val obfType =
+                        jvmFieldDescToClassName(obfDesc)
+                    if (obfType != null) {
+                        namedType =
+                            obfToDeobfClassMap[obfType]
+                                ?: obfToDeobfClassMap[obfType.replace('$', '.')]
+                                        ?: obfToDeobfClassMap[obfType.replace(
+                                    '.',
+                                    '$'
+                                )]
+                    }
                 }
             }
+
+            if (deobfField != null && namedType != null) {
+                val canon = canonicalDeobfClass(namedType)
+                fieldTypesForOwner[deobfField] = canon
+                obfFieldTypeDeobfMap.getOrPut(obfClass) { mutableMapOf() }[obfField!!] = canon
+            }
+
 
             if (obfField != null && deobfField != null) {
                 fieldMap[deobfField] = obfField
@@ -469,6 +719,159 @@ fun buildDeobfToObfMapFromTree(tree: MappingTree, obfNamespace: Int, deobfNamesp
     logger.info("  deobfToObfFieldMap size: ${deobfToObfFieldMap.size}")
 }
 
+data class StrongPick(val obfName: String?, val retDeobf: String?)
+
+private fun strongPickOnOwner(
+    ownerDeobf: String,
+    nameOrObf: String,
+    arity: Int,
+    hints: List<String>
+): StrongPick {
+    val mp = mappingPickOnOwner(ownerDeobf, nameOrObf, arity, hints)
+    if (mp != null) return StrongPick(mp.obfName, mp.retDeobf)
+
+    val rp = reflectPickOnOwner(ownerDeobf, nameOrObf, arity, hints)
+    if (rp != null) return StrongPick(rp.obfName, rp.retDeobf)
+
+    return StrongPick(null, null)
+}
+
+
+private fun reflectPickOnOwner(
+    ownerDeobf: String,
+    nameOrObf: String,
+    arity: Int,
+    hints: List<String>
+): ReflectPick? {
+    val cls = tryLoadEither(ownerDeobf) ?: return null
+
+    val cands = LinkedHashMap<String, java.lang.reflect.Method>()
+    fun accept(m: java.lang.reflect.Method) {
+        val k = methodKey(m)
+        if (!cands.containsKey(k)) cands[k] = m
+    }
+
+    var arr = cls.methods
+    var i = 0
+    while (i < arr.size) {
+        val m = arr[i]; accept(m); i++
+    }
+    arr = cls.declaredMethods
+    i = 0
+    while (i < arr.size) {
+        val m = arr[i]; accept(m); i++
+    }
+
+    val filtered = ArrayList<java.lang.reflect.Method>()
+    val backOwner = deobfToObfClassMap[ownerDeobf]?.let(::normalizeOwnerForBackMap)
+    val backMap = if (backOwner != null) obfToDeobfMethodMap[backOwner] else null
+
+    for (m in cands.values) {
+        val n = m.name
+        var ok =
+            (n == nameOrObf) || (!isObfMethodName(nameOrObf) && backMap != null && backMap[methodKey(m)] == nameOrObf)
+        if (ok) filtered += m
+    }
+    if (filtered.isEmpty()) return null
+
+    var best: java.lang.reflect.Method? = null
+    var bestScore = Int.MIN_VALUE
+    i = 0
+    while (i < filtered.size) {
+        val m = filtered[i]
+        val pc = m.parameterCount
+        var s = if (pc == arity) 1000 else 1000 - kotlin.math.abs(pc - arity) * 50
+        val pts = m.parameterTypes
+        val n = minOf(pts.size, hints.size)
+        var j = 0
+        while (j < n) {
+            val h = hints[j]
+            if (h.isNotEmpty()) {
+                val atom = classToJvmAtom(pts[j])
+                if (atom.contains(h)) s += 3
+            }
+            j++
+        }
+        if (s > bestScore) {
+            bestScore = s; best = m
+        }
+        i++
+    }
+
+    val chosen = best ?: return null
+    val ret = chosen.returnType
+    val retDeobf = if (ret == java.lang.Void.TYPE) null else {
+        val obf = ret.name
+        val named = obfToDeobfClassMap[obf] ?: obfToDeobfClassMap[obf.replace('$', '.')] ?: obf
+        canonicalDeobfClass(named)
+    }
+
+    return ReflectPick(chosen.name, retDeobf)
+}
+
+data class MappingPick(val obfName: String, val retDeobf: String?)
+
+private fun mappingPickOnOwner(
+    ownerDeobf: String,
+    nameOrObf: String,
+    arity: Int,
+    hints: List<String>
+): MappingPick? {
+    if (!isObfMethodName(nameOrObf)) {
+        val list = deobfMethodOverloads[ownerDeobf]?.get(nameOrObf) ?: return null
+        var bestObf: String? = null
+        var bestRet: String? = null
+        var bestScore = Int.MIN_VALUE
+        for ((deobfDesc, obf) in list) {
+            val pc = paramCount(deobfDesc)
+            val base = if (pc == arity) 1000 else 1000 - kotlin.math.abs(pc - arity) * 50
+            val ps = paramTypes(deobfDesc)
+            var s = base
+            val n = minOf(ps.size, hints.size)
+            var i = 0
+            while (i < n) {
+                val h = hints[i]
+                if (h.isNotEmpty() && ps[i].contains(h)) s += 3
+                i++
+            }
+            if (s > bestScore) {
+                bestScore = s
+                bestObf = obf
+                bestRet = deobfRetFromDeobfDesc(deobfDesc)
+            }
+        }
+        if (bestObf != null) return MappingPick(bestObf!!, bestRet)
+        return null
+    }
+
+    val obfOwner = deobfToObfClassMap[ownerDeobf] ?: return null
+    val table = obfToDeobfMethodMap[obfOwner] ?: return null
+    var bestObf: String? = null
+    var bestRet: String? = null
+    var bestScore = Int.MIN_VALUE
+
+    for ((key, _) in table) {
+        if (!key.startsWith("$nameOrObf(")) continue
+        val desc = key.substring(nameOrObf.length)
+        val pc = paramCount(desc)
+        val base = if (pc == arity) 1000 else 1000 - kotlin.math.abs(pc - arity) * 50
+        val ps = paramTypes(desc)
+        var s = base
+        val n = minOf(ps.size, hints.size)
+        var i = 0
+        while (i < n) {
+            val h = hints[i]
+            if (h.isNotEmpty() && ps[i].contains(h)) s += 3
+            i++
+        }
+        if (s > bestScore) {
+            bestScore = s
+            bestObf = nameOrObf
+            bestRet = deobfRetFromObfDesc(desc)
+        }
+    }
+    return if (bestObf != null) MappingPick(bestObf!!, bestRet) else null
+}
 
 private fun canonicalDeobfClass(name: String): String {
     val n = name.replace('$', '.')
@@ -692,8 +1095,13 @@ private fun resolveTypeRef(text: String, imports: Map<String, String>): String {
 private fun resolveCtorType(expr: KtCallExpression, imports: Map<String, String>): String? {
     val callee = expr.calleeExpression ?: return null
     return when (callee) {
-        is KtNameReferenceExpression -> resolveTypeRef(callee.getReferencedName(), imports)
-        is KtDotQualifiedExpression -> resolveTypeRef(callee.text, imports)
+        is KtNameReferenceExpression -> {
+            val t = callee.getReferencedName()
+            val fq = imports[t] ?: t
+            canonicalDeobfClass(fq)
+        }
+
+        is KtDotQualifiedExpression -> canonicalDeobfClass(callee.text)
         else -> null
     }
 }
@@ -757,23 +1165,120 @@ fun findMethodUsages(ktFile: KtFile): Set<MethodUse> {
             val qualifierExpr = dot.receiverExpression
 
             val candidates = mutableListOf<String>()
-            when (qualifierExpr) {
+
+            when (val q = qualifierExpr) {
+
                 is KtNameReferenceExpression -> {
-                    val qn = qualifierExpr.getReferencedName()
+                    val qn = q.getReferencedName()
                     importSimpleNameMap[qn]?.let { candidates += canonicalDeobfClass(it) }
                     if (deobfToObfClassMap.containsKey(qn)) candidates += canonicalDeobfClass(qn)
                 }
 
                 is KtDotQualifiedExpression -> {
-                    candidates += canonicalDeobfClass(qualifierExpr.text)
+                    val innerCall = q.selectorExpression as? KtCallExpression
+                    if (innerCall != null) {
+                        val ownerExpr = q.receiverExpression
+                        val innerOwnerDeobf = when (ownerExpr) {
+                            is KtNameReferenceExpression -> {
+                                val qn = ownerExpr.getReferencedName()
+                                canonicalDeobfClass(importSimpleNameMap[qn] ?: qn)
+                            }
+
+                            is KtDotQualifiedExpression -> canonicalDeobfClass(ownerExpr.text)
+                            else -> null
+                        }
+
+                        val innerName = (innerCall.calleeExpression as? KtSimpleNameExpression)?.getReferencedName()
+                        val innerArity = innerCall.valueArguments.size
+                        val innerHints = innerCall.valueArguments.map { a ->
+                            val ex = a.getArgumentExpression()
+                            when (ex) {
+                                is KtStringTemplateExpression -> "java/lang/String"
+                                is KtConstantExpression -> when (ex.text.lowercase()) {
+                                    "true", "false" -> "Z"
+                                    else -> if (ex.text.contains('.')) "D" else "I"
+                                }
+
+                                is KtNameReferenceExpression -> ex.getReferencedName()
+                                is KtCallExpression -> resolveCtorType(ex, importSimpleNameMap)?.replace('.', '/')
+                                else -> ""
+                            } ?: ""
+                        }
+
+                        val ret = if (innerOwnerDeobf != null && innerName != null)
+                            deobfMethodReturnType(innerOwnerDeobf, innerName, innerArity, innerHints)
+                                ?: obfMethodReturnType(innerOwnerDeobf, innerName, innerArity, innerHints)
+                                ?: reflectMethodReturnType(innerOwnerDeobf, innerName, innerArity, innerHints)
+                        else null
+
+                        if (ret != null) candidates += canonicalDeobfClass(ret)
+                    } else {
+                        candidates += canonicalDeobfClass(q.text)
+                    }
+                }
+
+                is KtCallExpression -> {
+                    val innerDot = qualifierExpr.parent as? KtDotQualifiedExpression
+                    val ownerExpr = innerDot?.receiverExpression
+                    val ownerDeobf = when (ownerExpr) {
+                        is KtNameReferenceExpression -> {
+                            val qn = ownerExpr.getReferencedName()
+                            canonicalDeobfClass(importSimpleNameMap[qn] ?: qn)
+                        }
+
+                        is KtDotQualifiedExpression -> canonicalDeobfClass(ownerExpr.text)
+                        else -> null
+                    }
+
+                    var innerName: String? = null
+                    val innerCallee = q.calleeExpression as? KtSimpleNameExpression
+                    if (innerCallee != null) innerName = innerCallee.getReferencedName()
+                    val innerArity = q.valueArguments.size
+                    val innerHints = q.valueArguments.map { a ->
+                        val ex = a.getArgumentExpression()
+                        val h = when (ex) {
+                            is KtStringTemplateExpression -> "java/lang/String"
+                            is KtConstantExpression -> when (ex.text.lowercase()) {
+                                "true", "false" -> "Z"
+                                else -> if (ex.text.contains('.')) "D" else "I"
+                            }
+
+                            is KtNameReferenceExpression -> ex.getReferencedName()
+                            is KtCallExpression -> resolveCtorType(ex, importSimpleNameMap)?.replace('.', '/')
+                            else -> ""
+                        } ?: ""
+                        h
+                    }
+
+                    val ret = if (ownerDeobf != null && innerName != null)
+                        deobfMethodReturnType(ownerDeobf, innerName, innerArity, innerHints)
+                            ?: obfMethodReturnType(ownerDeobf, innerName, innerArity, innerHints)
+                            ?: reflectMethodReturnType(ownerDeobf, innerName, innerArity, innerHints)
+                    else null
+
+                    if (ret != null) candidates += canonicalDeobfClass(ret)
+
+                    mdbg {
+                        "usage-scan recv=CALL innerOwner=${ownerDeobf ?: "?"} innerName=${innerName ?: "?"}/$innerArity " +
+                                "innerRet=${ret ?: "null"} → candidates=${candidates}"
+                    }
                 }
             }
 
             val hints = expr.valueArguments.map { a ->
                 val ex = a.getArgumentExpression()
-                val h = if (ex != null) literalHint(ex) else ""
-                val fq = importSimpleNameMap[h] ?: h
-                fq.replace('.', '/')
+                val h = when (ex) {
+                    is KtStringTemplateExpression -> "java/lang/String"
+                    is KtConstantExpression -> when (ex.text.lowercase()) {
+                        "true", "false" -> "Z"
+                        else -> if (ex.text.contains('.')) "D" else "I"
+                    }
+
+                    is KtNameReferenceExpression -> ex.getReferencedName()
+                    is KtCallExpression -> resolveCtorType(ex, importSimpleNameMap)?.replace('.', '/')
+                    else -> ""
+                } ?: ""
+                h
             }
             val arity = hints.size
 
@@ -781,16 +1286,20 @@ fun findMethodUsages(ktFile: KtFile): Set<MethodUse> {
             for (owner in candidates) {
                 val hasName = deobfMethodOverloads[owner]?.containsKey(methodName) == true
                 val hasArity = deobfToObfMethodByArity[owner]?.get(methodName)?.isNotEmpty() == true
+                mdbg { "probe owner=$owner meth=$methodName/$arity hasName=$hasName hasArity=$hasArity" }
                 if (hasName || hasArity) {
                     found += MethodUse(owner, methodName, arity, hints)
+                    mdbg { "ADD use owner=$owner meth=$methodName/$arity hints=$hints" }
                     added = true
                     break
                 }
             }
             if (!added && candidates.isNotEmpty()) {
                 found += MethodUse(candidates.first(), methodName, arity, hints)
+                mdbg { "ADD fallback use owner=${candidates.first()} meth=$methodName/$arity (no table match)" }
             }
         }
+
 
     })
 
@@ -954,7 +1463,7 @@ fun collectProtectedRangesByLine(ktFile: KtFile, source: String): Map<Int, List<
         while (sOff < end) {
             val line = lineIndexOf(sOff, starts)
             val lineStart = starts[line]
-            val lineEnd = if (line + 1 < starts.size) starts[line + 1] else source.length + 1
+            val lineEnd = if (line + 1 < starts.size) starts[line + 1] else source.length
             val segStart = sOff - lineStart
             val segEnd = minOf(end, lineEnd) - lineStart
             if (segEnd > segStart) {
@@ -992,8 +1501,9 @@ fun collectProtectedRangesByLine(ktFile: KtFile, source: String): Map<Int, List<
         var cur: IntRange? = null
         for (r in segs) {
             if (cur == null) cur = r
-            else if (r.first <= cur!!.last) cur = cur!!.first until maxOf(cur!!.last + 1, r.last + 1)
-            else {
+            else if (r.first <= cur!!.last) {
+                cur = cur!!.first until maxOf(cur!!.last + 1, r.last + 1)
+            } else {
                 merged.add(cur!!); cur = r
             }
         }
@@ -1054,24 +1564,357 @@ private fun safeReplaceLine(
     return sb.toString()
 }
 
+private fun hintOfClass(c: Class<*>): String {
+    if (c.isArray) {
+        var t = c
+        var dims = ""
+        while (t.isArray) {
+            dims += "["; t = t.componentType
+        }
+        return when (t) {
+            java.lang.Byte.TYPE -> dims + "B"
+            java.lang.Character.TYPE -> dims + "C"
+            java.lang.Double.TYPE -> dims + "D"
+            java.lang.Float.TYPE -> dims + "F"
+            java.lang.Integer.TYPE -> dims + "I"
+            java.lang.Long.TYPE -> dims + "J"
+            java.lang.Short.TYPE -> dims + "S"
+            java.lang.Boolean.TYPE -> dims + "Z"
+            else -> dims + "L" + t.name.replace('.', '/')
+        }
+    }
+    if (c.isPrimitive) {
+        return when (c) {
+            java.lang.Byte.TYPE -> "B"
+            java.lang.Character.TYPE -> "C"
+            java.lang.Double.TYPE -> "D"
+            java.lang.Float.TYPE -> "F"
+            java.lang.Integer.TYPE -> "I"
+            java.lang.Long.TYPE -> "J"
+            java.lang.Short.TYPE -> "S"
+            java.lang.Boolean.TYPE -> "Z"
+            java.lang.Void.TYPE -> "V"
+            else -> ""
+        }
+    }
+    return "L" + c.name.replace('.', '/')
+}
+
+private fun scoreByHints(paramTypes: Array<Class<*>>, hints: List<String>): Int {
+    var score = 0
+    val n = minOf(paramTypes.size, hints.size)
+    var i = 0
+    while (i < n) {
+        val h = hints[i]
+        if (h.isNotEmpty()) {
+            val ph = hintOfClass(paramTypes[i])
+            if (ph.contains(h)) score += 3
+        }
+        i++
+    }
+    return score
+}
+
+/** Reflect the return type of a method on ownerDeobf. Works for deobf or obf method names. */
+private fun reflectMethodReturnType(
+    ownerDeobf: String,
+    methodNameOrObf: String,
+    arity: Int,
+    hints: List<String>
+): String? {
+    val cls = tryLoadEither(ownerDeobf) ?: return null
+
+    var obfGuess: String? = deobfToObfMethodByArity[ownerDeobf]?.get(methodNameOrObf)?.get(arity)
+    if (obfGuess.isNullOrEmpty()) {
+        obfGuess = chooseOverloadByHints(ownerDeobf, methodNameOrObf, arity, hints)
+    }
+
+    val candidates = ArrayList<java.lang.reflect.Method>()
+    for (m in cls.methods) {
+        val pn = m.parameterCount
+        if (pn != arity) continue
+        val name = m.name
+        if (name == methodNameOrObf || (obfGuess != null && name == obfGuess)) {
+            candidates += m
+        }
+    }
+    if (candidates.isEmpty()) {
+        for (m in cls.declaredMethods) {
+            val pn = m.parameterCount
+            if (pn != arity) continue
+            val name = m.name
+            if (name == methodNameOrObf || (obfGuess != null && name == obfGuess)) {
+                candidates += m
+            }
+        }
+    }
+    if (candidates.isEmpty()) {
+        val obfOwner = deobfToObfClassMap[ownerDeobf]
+        val back = if (obfOwner != null) obfToDeobfMethodMap[obfOwner] else null
+        if (back != null) {
+            for (m in cls.methods) {
+                if (m.parameterCount != arity) continue
+                val name = m.name
+                val key = buildString {
+                    append(name).append('(')
+                    val pts = m.parameterTypes
+                    for (t in pts) append(hintOfClass(t))
+                    append(')')
+                    append(hintOfClass(m.returnType))
+                }
+                val deobfName = back[key]
+                if (deobfName == methodNameOrObf) candidates += m
+            }
+            if (candidates.isEmpty()) {
+                for (m in cls.declaredMethods) {
+                    if (m.parameterCount != arity) continue
+                    val name = m.name
+                    val key = buildString {
+                        append(name).append('(')
+                        val pts = m.parameterTypes
+                        for (t in pts) append(hintOfClass(t))
+                        append(')')
+                        append(hintOfClass(m.returnType))
+                    }
+                    val deobfName = back[key]
+                    if (deobfName == methodNameOrObf) candidates += m
+                }
+            }
+        }
+    }
+
+    if (candidates.isEmpty()) return null
+
+    var best: java.lang.reflect.Method? = null
+    var bestScore = Int.MIN_VALUE
+    for (m in candidates) {
+        val s = scoreByHints(m.parameterTypes, hints)
+        if (s > bestScore) {
+            bestScore = s; best = m
+        }
+    }
+    val chosen = best ?: candidates[0]
+    val ret = chosen.returnType
+    if (ret == java.lang.Void.TYPE) return null
+
+    val obfRet = ret.name
+    val deobf =
+        obfToDeobfClassMap[obfRet]
+            ?: obfToDeobfClassMap[obfRet.replace('$', '.')]
+            ?: obfRet
+
+    return canonicalDeobfClass(deobf)
+}
+
+private fun classToJvmAtom(c: Class<*>): String {
+    if (c.isArray) {
+        var t = c;
+        val sb = StringBuilder()
+        while (t.isArray) {
+            sb.append('['); t = t.componentType
+        }
+        return when (t) {
+            java.lang.Byte.TYPE -> sb.append('B').toString()
+            java.lang.Character.TYPE -> sb.append('C').toString()
+            java.lang.Double.TYPE -> sb.append('D').toString()
+            java.lang.Float.TYPE -> sb.append('F').toString()
+            java.lang.Integer.TYPE -> sb.append('I').toString()
+            java.lang.Long.TYPE -> sb.append('J').toString()
+            java.lang.Short.TYPE -> sb.append('S').toString()
+            java.lang.Boolean.TYPE -> sb.append('Z').toString()
+            else -> sb.append('L').append(t.name.replace('.', '/')).append(';').toString()
+        }
+    }
+    if (c.isPrimitive) {
+        return when (c) {
+            java.lang.Byte.TYPE -> "B"
+            java.lang.Character.TYPE -> "C"
+            java.lang.Double.TYPE -> "D"
+            java.lang.Float.TYPE -> "F"
+            java.lang.Integer.TYPE -> "I"
+            java.lang.Long.TYPE -> "J"
+            java.lang.Short.TYPE -> "S"
+            java.lang.Boolean.TYPE -> "Z"
+            java.lang.Void.TYPE -> "V"
+            else -> ""
+        }
+    }
+    return "L" + c.name.replace('.', '/') + ";"
+}
+
+private fun methodKey(m: java.lang.reflect.Method): String {
+    val pts = m.parameterTypes
+    val sb = StringBuilder(m.name).append('(')
+    var i = 0
+    while (i < pts.size) {
+        sb.append(classToJvmAtom(pts[i])); i++
+    }
+    sb.append(')').append(classToJvmAtom(m.returnType))
+    return sb.toString()
+}
+
+private fun scoreByHints(params: Array<Class<*>>, hints: List<String>, arity: Int): Int {
+    var score = if (params.size == arity) 1000 else (1000 - kotlin.math.abs(params.size - arity) * 50)
+    val n = minOf(params.size, hints.size)
+    var i = 0
+    while (i < n) {
+        val h = hints[i]
+        if (h.isNotEmpty()) {
+            val a = classToJvmAtom(params[i])
+            if (a.contains(h)) score += 3
+        }
+        i++
+    }
+    return score
+}
+
+private fun normalizeOwnerForBackMap(obfOwner: String): String {
+    if (obfToDeobfClassMap.containsKey(obfOwner)) return obfOwner
+    val dot = obfOwner.replace('$', '.')
+    if (obfToDeobfClassMap.containsKey(dot)) return dot
+    return obfOwner
+}
+
+private fun tryLoadEither(name: String): Class<*>? {
+    val cl = TestParser::class.java.classLoader
+    val deobf = canonicalDeobfClass(name)
+    val candidates = arrayOf(
+        deobf, deobf.replace('$', '.'), deobf.replace('.', '$'),
+        deobfToObfClassMap[deobf],
+        deobfToObfClassMap[deobf]?.replace('$', '.'),
+        deobfToObfClassMap[deobf]?.replace('.', '$')
+    )
+    var i = 0
+    while (i < candidates.size) {
+        val n = candidates[i]
+        if (n != null) {
+            val c = runCatching { Class.forName(n, false, cl) }.getOrNull()
+            if (c != null) return c
+        }
+        i++
+    }
+    return null
+}
+
+data class ReflectPick(val obfName: String, val retDeobf: String?)
+
+private fun reflectSelectMethod(
+    ownerDeobf: String,
+    desiredNameOrObf: String,
+    arity: Int,
+    hints: List<String>
+): ReflectPick? {
+    val cls = tryLoadEither(ownerDeobf) ?: run {
+        mdbg { "reflect owner load FAIL: $ownerDeobf" }
+        return null
+    }
+    mdbg { "reflect owner=${cls.name} query=$desiredNameOrObf/$arity" }
+
+    val cands = ArrayList<java.lang.reflect.Method>()
+    fun collect(ms: Array<java.lang.reflect.Method>) {
+        var i = 0
+        while (i < ms.size) {
+            val m = ms[i]
+            val name = m.name
+            var accepts = false
+            if (name == desiredNameOrObf) {
+                accepts = true
+            } else {
+                val declObfOwner = normalizeOwnerForBackMap(m.declaringClass.name)
+                val backMap = obfToDeobfMethodMap[declObfOwner]
+                if (backMap != null) {
+                    val key = methodKey(m)
+                    val deobfName = backMap[key]
+                    if (deobfName == desiredNameOrObf) accepts = true
+                }
+            }
+            if (accepts) cands.add(m)
+            i++
+        }
+    }
+    collect(cls.methods)
+    collect(cls.declaredMethods)
+
+    mdbg { "reflect candidates=${cands.size} for $desiredNameOrObf (owner=${cls.name})" }
+    if (cands.isEmpty()) return null
+
+    var best: java.lang.reflect.Method? = null
+    var bestScore = Int.MIN_VALUE
+    var unique = true
+
+    var i = 0
+    while (i < cands.size) {
+        val m = cands[i]
+        val s = scoreByHints(m.parameterTypes, hints, arity)
+        mdbg { "  cand ${m.declaringClass.name}.${m.name}/${m.parameterCount} score=$s sig=${methodKey(m)}" }
+        if (s > bestScore) {
+            best = m; bestScore = s; unique = true
+        } else if (s == bestScore) unique = false
+        i++
+    }
+
+    if (!unique && best != null) {
+        val ownerC = cls
+        i = 0
+        while (i < cands.size) {
+            val m = cands[i]
+            val s = scoreByHints(m.parameterTypes, hints, arity)
+            if (s == bestScore && m.declaringClass == ownerC) {
+                best = m; break
+            }
+            i++
+        }
+    }
+
+    val chosen = best!!
+    val ret = chosen.returnType
+    val retDeobf = if (ret == java.lang.Void.TYPE) null else {
+        val obfRet = ret.name
+        val named = obfToDeobfClassMap[obfRet]
+            ?: obfToDeobfClassMap[obfRet.replace('$', '.')]
+            ?: obfRet
+        canonicalDeobfClass(named)
+    }
+    mdbg { "reflect PICK ${chosen.declaringClass.name}.${chosen.name}/${chosen.parameterCount} ret=${retDeobf ?: "void"}" }
+    return ReflectPick(chosen.name, retDeobf)
+}
+
+
 private fun tryLoadNamed(fq: String): Class<*>? = try {
     Class.forName(fq, false, TestParser::class.java.classLoader)
 } catch (_: Throwable) {
     null
 }
 
+private fun isAssignableFromNamed(superNamed: String, subNamed: String): Boolean {
+    val superC = tryLoadEither(superNamed) ?: return false
+    val subC = tryLoadEither(subNamed) ?: return false
+    return superC.isAssignableFrom(subC)
+}
+
 private fun collectSuperChainNamed(startFq: String): Set<String> {
-    val seen = LinkedHashSet<String>()
+    val seenClasses = LinkedHashSet<Class<*>>()
     val q: ArrayDeque<Class<*>> = ArrayDeque()
-    val start = tryLoadNamed(startFq) ?: return setOf(startFq)
+    val start = tryLoadEither(startFq) ?: return setOf(startFq)
+
     q.add(start)
     while (q.isNotEmpty()) {
         val c = q.removeFirst()
-        if (!seen.add(c.name)) continue
+        if (!seenClasses.add(c)) continue
         c.superclass?.let { q.add(it) }
         c.interfaces?.forEach { q.add(it) }
     }
-    return seen
+
+    val out = LinkedHashSet<String>()
+    for (c in seenClasses) {
+        val jvm = c.name
+        val deobf =
+            obfToDeobfClassMap[jvm]
+                ?: obfToDeobfClassMap[jvm.replace('$', '.')]
+                ?: jvm
+        out.add(canonicalDeobfClass(deobf))
+    }
+    return out
 }
 
 private fun resolveObfOverrideByChain(
@@ -1084,22 +1927,37 @@ private fun resolveObfOverrideByChain(
         val r = resolveObfOverrideMethodDirect(s, methodName, arity, hints)
         if (!r.isNullOrEmpty()) return r
     }
+
     val g = resolveObfMethodGlobalByNameAndHints(methodName, arity, hints)
-    return if (g != null && canonicalDeobfClass(g.first) in chain) g.second else null
+    if (g != null) {
+        val candOwner = canonicalDeobfClass(g.first)
+        if (candOwner in chain) return g.second
+        if (chain.any { isAssignableFromNamed(candOwner, it) }) return g.second
+    }
+
+    return null
 }
 
-private const val GUARD_PREFIX = "__KS_GUARD__"
 
+private const val GUARD_PREFIX = "__KS_GUARD__"
 private fun guardLine(line: String, protected: List<IntRange>): Pair<String, List<String>> {
     if (protected.isEmpty()) return line to emptyList()
+
     var out = line
     val saved = ArrayList<String>(protected.size)
+
     val ranges = protected.sortedByDescending { it.first }
-    ranges.forEachIndexed { idx, r ->
-        val start = r.first
-        val endExclusive = r.last + 1
+
+    for ((idx, r) in ranges.withIndex()) {
+        val start = r.first.coerceIn(0, line.length)
+        val endExclusiveRaw = (r.last + 1)
+        val endExclusive = endExclusiveRaw.coerceIn(start, line.length)
+
+        if (start >= endExclusive) continue
+
         val token = "$GUARD_PREFIX${idx}__"
         saved.add(line.substring(start, endExclusive))
+
         out = out.substring(0, start) + token + out.substring(endExclusive)
     }
     return out to saved
@@ -1453,18 +2311,19 @@ class TestParser {
                         line = safeReplaceLine(line, emptyList(), Regex("""\b${Regex.escape(deobfField)}\b"""), obf)
                     }
                 }
-
+                val ambiguousMethodNames: Set<String> = foundMethods
+                    .groupBy { it.method }
+                    .filter { entry -> entry.value.map { it.className }.distinct().size > 1 }
+                    .keys
                 foundMethods.forEach { (className, deobfMethod, arity, hints) ->
-                    val obfClass0 = deobfToObfClassMap[className] ?: className
-                    val obfClass = obfClass0.replace('$', '.')
-                    var obfMethod = deobfToObfMethodByArity[className]?.get(deobfMethod)?.get(arity)
-                    if (obfMethod.isNullOrEmpty()) obfMethod =
-                        chooseOverloadByHints(className, deobfMethod, arity, hints)
-                    if (obfMethod.isNullOrEmpty()) {
-                        val g = resolveObfMethodGlobalByNameAndHints(deobfMethod, arity, hints)
-                        if (g != null && g.first == canonicalDeobfClass(className)) obfMethod = g.second
-                    }
+                    mdbg { "rename try owner=$className meth=$deobfMethod/$arity hints=$hints" }
+
+                    val pick = strongPickOnOwner(className, deobfMethod, arity, hints)
+                    val obfMethod = pick.obfName
+
                     if (!obfMethod.isNullOrEmpty()) {
+                        val obfClass0 = deobfToObfClassMap[className] ?: className
+                        val obfClass = obfClass0.replace('$', '.')
                         line = safeReplaceLine(
                             line, emptyList(),
                             Regex(
@@ -1475,10 +2334,21 @@ class TestParser {
                                 }\s*\("""
                             )
                         ) { mr -> "${mr.groupValues[1]}.$obfMethod(" }
-                        line =
-                            safeReplaceLine(line, emptyList(), Regex("""\b${Regex.escape(deobfMethod)}\b"""), obfMethod)
+
+                        if (deobfMethod !in ambiguousMethodNames) {
+                            line = safeReplaceLine(
+                                line, emptyList(),
+                                Regex("""\b${Regex.escape(deobfMethod)}\b"""),
+                                obfMethod
+                            )
+                        }
+                        mdbg { "  DONE rename $className.$deobfMethod/$arity -> $obfMethod" }
+                    } else {
+                        mdbg { "  FAIL rename $className.$deobfMethod/$arity (no owner-scoped pick)" }
                     }
                 }
+
+
 
                 line = restoreLine(line, saved)
                 lines[i] = line
