@@ -1513,6 +1513,22 @@ private fun recordMethodUse(
     }
 }
 
+private fun argHead(expr: KtExpression?): String? = when (expr) {
+    is KtStringTemplateExpression -> "kotlin.String"
+    is KtNameReferenceExpression -> expr.getReferencedName()
+    is KtCallExpression -> {
+        val callee = expr.calleeExpression
+        when (callee) {
+            is KtNameReferenceExpression -> callee.getReferencedName()
+            is KtDotQualifiedExpression -> argHead(callee.receiverExpression)
+            else -> null
+        }
+    }
+
+    is KtDotQualifiedExpression -> argHead(expr.receiverExpression)
+    else -> null
+}
+
 fun findMethodUsages(ktFile: KtFile): Set<MethodUse> {
     val found = mutableSetOf<MethodUse>()
     val importSimpleNameMap = mutableMapOf<String, String>()
@@ -1523,6 +1539,84 @@ fun findMethodUsages(ktFile: KtFile): Set<MethodUse> {
 
     val env = TypeEnv()
     env.push()
+
+
+    fun hintFromType(deobfFq: String?): String =
+        if (deobfFq == null) "" else canonicalDeobfClass(deobfFq).replace('.', '/')
+
+    fun resolveExprType(
+        expr: KtExpression,
+        env: TypeEnv,
+        imports: Map<String, String>
+    ): String? = when (expr) {
+        is KtThisExpression -> env["this"]
+
+        is KtNameReferenceExpression -> {
+            val rn = expr.getReferencedName()
+            env[rn] ?: resolveTypeRef(rn, imports)
+        }
+
+        is KtDotQualifiedExpression -> {
+            val ownerType = resolveExprType(expr.receiverExpression, env, imports)
+            when (val sel = expr.selectorExpression) {
+                is KtSimpleNameExpression -> {
+                    val field = sel.getReferencedName()
+                    if (ownerType != null) nextTypeAfterField(ownerType, field) else null
+                }
+
+                is KtCallExpression -> {
+                    val method = (sel.calleeExpression as? KtSimpleNameExpression)?.getReferencedName()
+                    val hints = sel.valueArguments.map { a ->
+                        val t = a.getArgumentExpression()?.let { resolveExprType(it, env, imports) }
+                        if (t != null) hintFromType(t) else ""
+                    }
+                    if (ownerType != null && method != null)
+                        strongPickOnOwner(ownerType, method, hints.size, hints).retDeobf
+                    else null
+                }
+
+                else -> null
+            }
+        }
+
+        is KtSafeQualifiedExpression -> {
+            val recv = expr.receiverExpression
+            val sel = expr.selectorExpression
+            resolveExprType(
+                KtPsiFactory(expr.project).createExpression("${recv.text}.${sel?.text}") as KtExpression,
+                env,
+                imports
+            )
+        }
+
+        is KtCallExpression -> resolveCtorType(expr, imports)
+
+        else -> null
+    }
+
+    fun hintForArg(ex: KtExpression?): String {
+        if (ex == null) return ""
+        resolveExprType(ex, env, importSimpleNameMap)?.let { return hintFromType(it) }
+
+        return when (ex) {
+            is KtStringTemplateExpression -> "java/lang/String"
+            is KtConstantExpression -> when (ex.text.lowercase()) {
+                "true", "false" -> "Z"
+                else -> if (ex.text.contains('.')) "D" else "I"
+            }
+
+            is KtNameReferenceExpression -> ex.getReferencedName()
+            is KtCallExpression -> hintFromType(resolveCtorType(ex, importSimpleNameMap))
+            is KtDotQualifiedExpression -> {
+                val owner = ex.receiverExpression
+                resolveExprType(owner, env, importSimpleNameMap)?.let { return hintFromType(it) }
+                ""
+            }
+
+            else -> ""
+        }
+    }
+
 
     ktFile.accept(object : KtTreeVisitorVoid() {
 
@@ -1564,55 +1658,6 @@ fun findMethodUsages(ktFile: KtFile): Set<MethodUse> {
             }
         }
 
-        private fun resolveExprType(
-            expr: KtExpression,
-            env: TypeEnv,
-            importSimpleNameMap: Map<String, String>
-        ): String? = when (expr) {
-
-            is KtNameReferenceExpression -> {
-                val rn = expr.getReferencedName()
-                env[rn] ?: resolveTypeRef(rn, importSimpleNameMap)
-            }
-
-            is KtDotQualifiedExpression -> {
-                val ownerType = resolveExprType(expr.receiverExpression, env, importSimpleNameMap)
-                when (val sel = expr.selectorExpression) {
-                    is KtSimpleNameExpression -> {
-                        val field = sel.getReferencedName()
-                        if (ownerType != null) nextTypeAfterField(ownerType, field) else null
-                    }
-
-                    is KtCallExpression -> {
-                        val method = (sel.calleeExpression as? KtSimpleNameExpression)?.getReferencedName()
-                        val hints = argHints(sel, importSimpleNameMap)
-                        if (ownerType != null && method != null)
-                            strongPickOnOwner(ownerType, method, hints.size, hints).retDeobf
-                        else null
-                    }
-
-                    else -> null
-                }
-            }
-
-            is KtSafeQualifiedExpression -> {
-                val recv = expr.receiverExpression
-                val sel = expr.selectorExpression
-                resolveExprType(
-                    KtPsiFactory(expr.project).createExpression("${recv.text}.${sel?.text}") as KtExpression,
-                    env,
-                    importSimpleNameMap
-                )
-            }
-
-            is KtCallExpression -> {
-                resolveCtorType(expr, importSimpleNameMap)
-            }
-
-            else -> null
-        }
-
-
         override fun visitProperty(property: KtProperty) {
             super.visitProperty(property)
 
@@ -1625,14 +1670,13 @@ fun findMethodUsages(ktFile: KtFile): Set<MethodUse> {
 
             val init = property.initializer ?: return
             var inferred: String? = null
-
             when (init) {
                 is KtCallExpression -> {
                     val parent = init.parent
                     if (parent is KtDotQualifiedExpression) {
                         val ownerType = resolveExprType(parent.receiverExpression, env, importSimpleNameMap)
                         val method = (init.calleeExpression as? KtSimpleNameExpression)?.getReferencedName()
-                        val hints = argHints(init, importSimpleNameMap)
+                        val hints = init.valueArguments.map { a -> hintForArg(a.getArgumentExpression()) }
                         if (ownerType != null && method != null) {
                             inferred = strongPickOnOwner(ownerType, method, hints.size, hints).retDeobf
                         }
@@ -1653,14 +1697,8 @@ fun findMethodUsages(ktFile: KtFile): Set<MethodUse> {
                         inferred = deobfFieldTypeMap[ownerType]?.get(fieldName)
                     }
                 }
-
-                else -> {
-                }
             }
-
-            if (inferred != null) {
-                env[name] = canonicalDeobfClass(inferred!!)
-            }
+            if (inferred != null) env[name] = canonicalDeobfClass(inferred!!)
         }
 
         override fun visitCallExpression(expr: KtCallExpression) {
@@ -1672,25 +1710,11 @@ fun findMethodUsages(ktFile: KtFile): Set<MethodUse> {
             val ownerDeobf = resolveExprType(dot.receiverExpression, env, importSimpleNameMap) ?: run {
                 val head = (dot.receiverExpression as? KtNameReferenceExpression)?.getReferencedName()
                 val headType = head?.let { env[it] ?: resolveTypeRef(it, importSimpleNameMap) }
-                if (headType == null) {
-                    return
-                } else canonicalDeobfClass(headType)
+                if (headType == null) return
+                else canonicalDeobfClass(headType)
             }
 
-            val hints = expr.valueArguments.map { a ->
-                val ex = a.getArgumentExpression()
-                when (ex) {
-                    is KtStringTemplateExpression -> "java/lang/String"
-                    is KtConstantExpression -> when (ex.text.lowercase()) {
-                        "true", "false" -> "Z"
-                        else -> if (ex.text.contains('.')) "D" else "I"
-                    }
-
-                    is KtNameReferenceExpression -> ex.getReferencedName()
-                    is KtCallExpression -> resolveCtorType(ex, importSimpleNameMap)?.replace('.', '/')
-                    else -> ""
-                } ?: ""
-            }
+            val hints = expr.valueArguments.map { a -> hintForArg(a.getArgumentExpression()) }
             val arity = hints.size
 
             val owners = buildList {
@@ -1701,7 +1725,6 @@ fun findMethodUsages(ktFile: KtFile): Set<MethodUse> {
 
             val hasName = owners.any { deobfMethodOverloads[it]?.containsKey(methodName) == true }
             val hasArity = owners.any { deobfToObfMethodByArity[it]?.get(methodName)?.isNotEmpty() == true }
-
 
             if (hasName || hasArity) {
                 found += MethodUse(ownerDeobf, methodName, arity, hints)
@@ -1718,13 +1741,10 @@ fun findMethodUsages(ktFile: KtFile): Set<MethodUse> {
                 found += MethodUse(ownerDeobf, methodName, arity, hints)
             }
         }
-
-
     })
 
     env.pop()
     return found.distinctBy { Triple(it.className, it.method, it.arity) }.toSet()
-
 }
 
 
