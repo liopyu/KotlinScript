@@ -75,7 +75,8 @@ fun saveMappingsToJson() {
         "obfToDeobfClassMap" to obfToDeobfClassMap,
         "obfToDeobfMethodMap" to obfToDeobfMethodMap,
         "obfToDeobfFieldMap" to obfToDeobfFieldMap,
-        "deobfFieldTypeMap" to deobfFieldTypeMap
+        "deobfFieldTypeMap" to deobfFieldTypeMap,
+        "obfFieldDescriptorMap" to obfFieldDescriptorMap
     )
 
     val file = getDevMappingFile()
@@ -136,6 +137,12 @@ fun loadMappingsFromResource() {
     obfToDeobfFieldMap.clear()
     parseMap<Map<String, Map<String, String>>>("obfToDeobfFieldMap", methodMapType)
         .forEach { (k, v) -> obfToDeobfFieldMap[k] = v.toMutableMap() }
+
+    obfFieldDescriptorMap.clear()
+    parseMap<Map<String, Map<String, String>>>("obfFieldDescriptorMap", methodMapType)
+        .forEach { (k, v) -> obfFieldDescriptorMap[k] = v.toMutableMap() }
+
+
     rebuildMethodArityIndex()
     rebuildOverloadsFromFlatMap()
 
@@ -175,12 +182,12 @@ fun buildMappingsIfNeeded(tree: MappingTree, obfNamespace: Int, deobfNamespace: 
         val mappingFile = getDevMappingFile()
         if (!mappingFile.exists()) {
             buildDeobfToObfMapFromTree(tree, obfNamespace, deobfNamespace)
-            saveMappingsToJson()
             logger.info("Generated mapping file at: ${mappingFile.absolutePath}")
         } else {
             loadMappingsFromResource()
             logger.info("Loaded existing mapping file at: ${mappingFile.absolutePath}")
         }
+        saveMappingsToJson()
     }
 }
 
@@ -215,10 +222,6 @@ private fun asChain(e: KtExpression): List<KtExpression> {
     return out
 }
 
-private fun nextTypeAfterField(ownerDeobf: String, deobfField: String): String? {
-    deobfFieldTypeMap[ownerDeobf]?.get(deobfField)?.let { return it }
-    return deobfFieldTypeMap[canonicalDeobfClass(ownerDeobf)]?.get(deobfField)
-}
 
 val debugChains = true
 var debugMethods = true
@@ -251,7 +254,6 @@ private fun findFieldInHierarchy(c0: Class<*>, name: String): java.lang.reflect.
     return null
 }
 
-/** Discover the next deobf type for ownerDeobf.deobfField using reflection on the obf class. */
 private fun reflectDeobfFieldType(ownerDeobf: String, deobfField: String): String? {
     val obfOwner = deobfToObfClassMap[ownerDeobf] ?: return null
     val obfField = deobfToObfFieldMap[ownerDeobf]?.get(deobfField) ?: return null
@@ -406,6 +408,10 @@ fun findChainedFieldRewrites(ktFile: KtFile, source: String): Map<Int, List<Pair
 
     ktFile.accept(object : KtTreeVisitorVoid() {
         override fun visitDotQualifiedExpression(expr: KtDotQualifiedExpression) {
+            if (expr.parent is KtUserType || expr.parent?.parent is KtUserType) return
+            val whole = canonicalDeobfClass(expr.text)
+            if (deobfToObfClassMap.containsKey(whole) || obfToDeobfClassMap.containsKey(whole)) return
+
             super.visitDotQualifiedExpression(expr)
 
             val parts = asChain(expr)
@@ -566,9 +572,85 @@ fun findVariableTypes(ktFile: KtFile): Map<String, String> {
 
         override fun visitProperty(property: KtProperty) {
             super.visitProperty(property)
-            val t = property.typeReference?.text?.let(::fq) ?: return
-            property.name?.let { vars[it] = t }
+
+            fun putVar(name: String?, typeFq: String?) {
+                if (name == null || typeFq == null) return
+                vars[name] = canonicalDeobfClass(typeFq)
+            }
+
+            property.typeReference?.text?.let { t ->
+                putVar(property.name, fq(t))
+                return
+            }
+
+            val init = property.initializer ?: return
+
+            when (init) {
+                is KtCallExpression -> {
+                    val callee = init.calleeExpression
+                    if (callee is KtNameReferenceExpression || callee is KtDotQualifiedExpression) {
+                        resolveCtorType(init, importSimple)?.let { putVar(property.name, it) }
+                    } else {
+                        val dot = init.parent as? KtDotQualifiedExpression
+                        if (dot != null) {
+                            val ownerExpr = dot.receiverExpression
+                            val ownerDeobf: String? = when (ownerExpr) {
+                                is KtNameReferenceExpression -> {
+                                    val rn = ownerExpr.getReferencedName()
+                                    vars[rn] ?: fq(rn)
+                                }
+
+                                is KtDotQualifiedExpression -> canonicalDeobfClass(ownerExpr.text)
+                                is KtCallExpression -> {
+                                    val c = ownerExpr.calleeExpression
+                                    if (c is KtNameReferenceExpression || c is KtDotQualifiedExpression) {
+                                        resolveCtorType(ownerExpr, importSimple)
+                                    } else {
+                                        null
+                                    }
+                                }
+
+                                else -> null
+                            }
+
+                            val mn = (init.calleeExpression as? KtSimpleNameExpression)?.getReferencedName()
+                            val hints = argHints(init, importSimple)
+                            val arity = hints.size
+
+                            val ret = if (ownerDeobf != null && mn != null)
+                                strongPickOnOwner(ownerDeobf, mn, arity, hints).retDeobf
+                            else null
+
+                            putVar(property.name, ret)
+                        }
+                    }
+                }
+
+                is KtNameReferenceExpression -> {
+                    val rn = init.getReferencedName()
+                    putVar(property.name, vars[rn] ?: fq(rn))
+                }
+
+                is KtDotQualifiedExpression -> {
+                    val sel = init.selectorExpression as? KtSimpleNameExpression
+                    val fieldName = sel?.getReferencedName()
+                    val ownerExpr = init.receiverExpression
+                    val ownerDeobf = when (ownerExpr) {
+                        is KtNameReferenceExpression -> {
+                            val rn = ownerExpr.getReferencedName()
+                            vars[rn] ?: fq(rn)
+                        }
+
+                        is KtDotQualifiedExpression -> canonicalDeobfClass(ownerExpr.text)
+                        else -> null
+                    }
+                    val next = if (ownerDeobf != null && fieldName != null)
+                        nextTypeAfterField(ownerDeobf, fieldName) else null
+                    putVar(property.name, next)
+                }
+            }
         }
+
     })
     return vars
 }
@@ -584,6 +666,8 @@ val obfToDeobfClassMap: MutableMap<String, String> = mutableMapOf()
 val obfToDeobfMethodMap: MutableMap<String, MutableMap<String, String>> = mutableMapOf()
 val obfToDeobfFieldMap: MutableMap<String, MutableMap<String, String>> = mutableMapOf()
 val obfFieldTypeDeobfMap: MutableMap<String, MutableMap<String, String>> = mutableMapOf()
+val obfFieldDescriptorMap: MutableMap<String, MutableMap<String, String>> = mutableMapOf()
+
 fun buildDeobfToObfMapFromTree(tree: MappingTree, obfNamespace: Int, deobfNamespace: Int) {
     val namespaces = listOf(tree.srcNamespace) + tree.dstNamespaces
     var classCount = 0
@@ -664,6 +748,7 @@ fun buildDeobfToObfMapFromTree(tree: MappingTree, obfNamespace: Int, deobfNamesp
 
 
         for (fieldDef in classDef.fields) {
+            val obfDesc = runCatching { fieldDef.getDesc(obfNamespace) }.getOrNull()
             val fieldNames = mutableListOf<String?>()
             for (i in namespaces.indices) {
                 val n = try {
@@ -707,6 +792,10 @@ fun buildDeobfToObfMapFromTree(tree: MappingTree, obfNamespace: Int, deobfNamesp
             if (obfField != null && deobfField != null) {
                 fieldMap[deobfField] = obfField
                 obfFieldMap[obfField] = deobfField
+            }
+
+            if (obfField != null && obfDesc != null) {
+                obfFieldDescriptorMap.getOrPut(obfClass) { mutableMapOf() }[obfField] = obfDesc
             }
         }
 
@@ -811,52 +900,63 @@ private fun reflectPickOnOwner(
 
 data class MappingPick(val obfName: String, val retDeobf: String?)
 
+private fun classClosureDeobf(ownerDeobf: String): Set<String> {
+    val root = tryLoadEither(ownerDeobf) ?: return setOf(canonicalDeobfClass(ownerDeobf))
+    val seen = LinkedHashSet<Class<*>>()
+    val q = ArrayDeque<Class<*>>()
+    q.add(root)
+    while (q.isNotEmpty()) {
+        val c = q.removeFirst()
+        if (!seen.add(c)) continue
+        c.superclass?.let(q::add)
+        c.interfaces?.forEach(q::add)
+    }
+    val out = LinkedHashSet<String>()
+    for (c in seen) {
+        val jvm = c.name
+        val deobf = obfToDeobfClassMap[jvm]
+            ?: obfToDeobfClassMap[jvm.replace('$', '.')]
+            ?: jvm
+        out += canonicalDeobfClass(deobf)
+    }
+    return out
+}
+
+fun debugCheckDimensionType() {
+    val owner = "net.minecraft.client.multiplayer.ClientLevel"
+    val method = "dimensionType"
+    val owners = buildList {
+        add(owner)
+        addAll(classClosureDeobf(owner))
+    }
+    val where = owners.filter { deobfMethodOverloads[it]?.containsKey(method) == true }
+    logger.info("[KS-debug] dimensionType present on: $where")
+}
+
+/**
+ * Mapping-based owner/method resolver that also searches supertypes/interfaces.
+ * Returns the obf method name to use, plus the *deobf* return type (if known).
+ *
+ * Requires:
+ *  - deobfMethodOverloads: Map<OwnerDeobf, Map<MethodNameDeobf, Map<DeobfDesc, ObfName>>>
+ *  - deobfToObfClassMap, obfToDeobfMethodMap
+ *  - helpers: isObfMethodName, paramCount, paramTypes, deobfRetFromDeobfDesc, deobfRetFromObfDesc
+ *  - canonicalDeobfClass(...)
+ */
 private fun mappingPickOnOwner(
     ownerDeobf: String,
     nameOrObf: String,
     arity: Int,
     hints: List<String>
 ): MappingPick? {
-    if (!isObfMethodName(nameOrObf)) {
-        val list = deobfMethodOverloads[ownerDeobf]?.get(nameOrObf) ?: return null
-        var bestObf: String? = null
-        var bestRet: String? = null
-        var bestScore = Int.MIN_VALUE
-        for ((deobfDesc, obf) in list) {
-            val pc = paramCount(deobfDesc)
-            val base = if (pc == arity) 1000 else 1000 - kotlin.math.abs(pc - arity) * 50
-            val ps = paramTypes(deobfDesc)
-            var s = base
-            val n = minOf(ps.size, hints.size)
-            var i = 0
-            while (i < n) {
-                val h = hints[i]
-                if (h.isNotEmpty() && ps[i].contains(h)) s += 3
-                i++
-            }
-            if (s > bestScore) {
-                bestScore = s
-                bestObf = obf
-                bestRet = deobfRetFromDeobfDesc(deobfDesc)
-            }
-        }
-        if (bestObf != null) return MappingPick(bestObf!!, bestRet)
-        return null
-    }
+    val canonOwner = canonicalDeobfClass(ownerDeobf)
+    val owners: List<String> = buildList {
+        add(canonOwner)
+        addAll(classClosureDeobf(canonOwner))
+    }.distinct()
 
-    val obfOwner = deobfToObfClassMap[ownerDeobf] ?: return null
-    val table = obfToDeobfMethodMap[obfOwner] ?: return null
-    var bestObf: String? = null
-    var bestRet: String? = null
-    var bestScore = Int.MIN_VALUE
-
-    for ((key, _) in table) {
-        if (!key.startsWith("$nameOrObf(")) continue
-        val desc = key.substring(nameOrObf.length)
-        val pc = paramCount(desc)
-        val base = if (pc == arity) 1000 else 1000 - kotlin.math.abs(pc - arity) * 50
-        val ps = paramTypes(desc)
-        var s = base
+    fun scoreParams(ps: List<String>, hints: List<String>, arity: Int): Int {
+        var s = if (ps.size == arity) 1000 else 1000 - kotlin.math.abs(ps.size - arity) * 50
         val n = minOf(ps.size, hints.size)
         var i = 0
         while (i < n) {
@@ -864,14 +964,98 @@ private fun mappingPickOnOwner(
             if (h.isNotEmpty() && ps[i].contains(h)) s += 3
             i++
         }
-        if (s > bestScore) {
-            bestScore = s
-            bestObf = nameOrObf
-            bestRet = deobfRetFromObfDesc(desc)
+        return s
+    }
+
+    var bestObf: String? = null
+    var bestRet: String? = null
+    var bestScore = Int.MIN_VALUE
+    var bestWhere: String? = null
+    var bestVia: String? = null
+
+    if (!isObfMethodName(nameOrObf)) {
+        for (own in owners) {
+            val byName = deobfMethodOverloads[own]?.get(nameOrObf) ?: continue
+            for ((deobfDesc, obfName) in byName) {
+                val ps = paramTypes(deobfDesc)
+                val s = scoreParams(ps, hints, arity)
+                if (s > bestScore) {
+                    bestScore = s
+                    bestObf = obfName
+                    bestRet = deobfRetFromDeobfDesc(deobfDesc)
+                    bestWhere = own
+                    bestVia = "overloads"
+                }
+            }
+        }
+
+        if (bestObf == null) {
+            for (own in owners) {
+                val obfOwner = deobfToObfClassMap[own] ?: continue
+                val table = obfToDeobfMethodMap[obfOwner] ?: obfToDeobfMethodMap[obfOwner.replace('$', '.')]
+                if (table == null) continue
+
+                for ((key, deobfName) in table) {
+                    if (deobfName != nameOrObf) continue
+                    val open = key.indexOf('(')
+                    if (open <= 0) continue
+                    val desc = key.substring(open)
+                    val ps = paramTypes(desc)
+                    val s = scoreParams(ps, hints, arity)
+                    if (s > bestScore) {
+                        bestScore = s
+                        bestObf = key.substring(0, open)
+                        bestRet = deobfRetFromObfDesc(desc)
+                        bestWhere = own
+                        bestVia = "backmap"
+                    }
+                }
+            }
+        }
+
+        if (bestObf != null) {
+            mdbg { "[KS-pick] mappingPickOnOwner deobf=$nameOrObf arity=$arity -> obf=$bestObf ret=$bestRet via=$bestVia where=$bestWhere (owners=${owners.size})" }
+            return MappingPick(bestObf!!, bestRet)
+        }
+
+        mdbg { "[KS-pick] mappingPickOnOwner deobf=$nameOrObf arity=$arity -> no match in closure (owners=${owners.size})" }
+        return null
+    }
+
+    for (own in owners) {
+        val obfOwner0 = deobfToObfClassMap[own] ?: continue
+        val candidates = listOf(obfOwner0, obfOwner0.replace('$', '.'))
+        var table: Map<String, String>? = null
+        for (cand in candidates) {
+            table = obfToDeobfMethodMap[cand]
+            if (table != null) break
+        }
+        if (table == null) continue
+
+        for ((key, _) in table) {
+            if (!key.startsWith("$nameOrObf(")) continue
+            val desc = key.substring(nameOrObf.length)
+            val ps = paramTypes(desc)
+            val s = scoreParams(ps, hints, arity)
+            if (s > bestScore) {
+                bestScore = s
+                bestObf = nameOrObf
+                bestRet = deobfRetFromObfDesc(desc)
+                bestWhere = own
+                bestVia = "obf+backmap"
+            }
         }
     }
-    return if (bestObf != null) MappingPick(bestObf!!, bestRet) else null
+
+    if (bestObf != null) {
+        mdbg { "[KS-pick] mappingPickOnOwner obf=$nameOrObf arity=$arity -> ret=$bestRet via=$bestVia where=$bestWhere (owners=${owners.size})" }
+        return MappingPick(bestObf!!, bestRet)
+    }
+
+    mdbg { "[KS-pick] mappingPickOnOwner obf=$nameOrObf arity=$arity -> no match in closure (owners=${owners.size})" }
+    return null
 }
+
 
 private fun canonicalDeobfClass(name: String): String {
     val n = name.replace('$', '.')
@@ -1109,16 +1293,152 @@ private fun resolveCtorType(expr: KtCallExpression, imports: Map<String, String>
 data class MethodUse(val className: String, val method: String, val arity: Int, val hints: List<String>)
 private class TypeEnv {
     private val stack = ArrayDeque<MutableMap<String, String>>()
-    fun push() = stack.addLast(mutableMapOf())
+        .apply { addLast(mutableMapOf()) }
+
+    fun push() {
+        stack.addLast(mutableMapOf())
+    }
+
     fun pop() {
+        require(stack.size > 1) { "TypeEnv: cannot pop the root scope" }
         stack.removeLast()
     }
 
-    fun put(name: String, deobfFqcn: String) {
+    operator fun get(name: String): String? =
+        stack.asReversed().firstNotNullOfOrNull { it[name] }
+
+    operator fun set(name: String, deobfFqcn: String) {
         stack.last()[name] = deobfFqcn
     }
 
-    fun get(name: String): String? = stack.asReversed().firstNotNullOfOrNull { it[name] }
+    fun put(name: String, deobfFqcn: String) {
+        this[name] = deobfFqcn
+    }
+
+    fun assign(name: String, deobfFqcn: String) {
+        for (frame in stack.asReversed()) {
+            if (name in frame) {
+                frame[name] = deobfFqcn; return
+            }
+        }
+        stack.last()[name] = deobfFqcn
+    }
+
+    inline fun <T> withScope(block: () -> T): T {
+        push()
+        return try {
+            block()
+        } finally {
+            pop()
+        }
+    }
+
+    fun lookup(name: String): String? = this[name]
+}
+
+private fun descriptorToDeobfType(desc: String): String? {
+    fun prim(t: Char) = when (t) {
+        'V' -> "void"
+        'Z' -> "boolean"
+        'B' -> "byte"
+        'S' -> "short"
+        'C' -> "char"
+        'I' -> "int"
+        'J' -> "long"
+        'F' -> "float"
+        'D' -> "double"
+        else -> null
+    }
+
+    var i = 0
+    var arrayDepth = 0
+    while (i < desc.length && desc[i] == '[') {
+        arrayDepth++; i++
+    }
+    val base = when (desc[i]) {
+        'L' -> {
+            val semi = desc.indexOf(';', i)
+            if (semi < 0) return null
+            val internal = desc.substring(i + 1, semi)
+            val deobf = obfToDeobfClassMap[internal] ?: internal.replace('/', '.')
+            i = semi + 1
+            deobf
+        }
+
+        else -> {
+            val p = prim(desc[i]) ?: return null
+            i++
+            p
+        }
+    }
+    return if (arrayDepth == 0) base else Array(arrayDepth) { "[]" }.joinToString("", prefix = base)
+}
+
+private fun nextTypeAfterField(ownerDeobf: String, deobfField: String): String? {
+    deobfFieldTypeMap[ownerDeobf]?.get(deobfField)?.let { return it }
+    val ownerCanon = canonicalDeobfClass(ownerDeobf)
+    deobfFieldTypeMap[ownerCanon]?.get(deobfField)?.let { return it }
+
+    val obfOwner = deobfToObfClassMap[ownerCanon]
+    val obfField = deobfToObfFieldMap[ownerCanon]?.get(deobfField)
+    if (obfOwner != null && obfField != null) {
+        val desc = obfFieldDescriptorMap[obfOwner]?.get(obfField)
+        if (!desc.isNullOrBlank()) {
+            val obfTypeDot = descToNamedTypeOrNull(desc)
+            if (!obfTypeDot.isNullOrBlank()) {
+                val namedType =
+                    obfToDeobfClassMap[obfTypeDot]
+                        ?: obfToDeobfClassMap[obfTypeDot.replace('$', '.')]
+                        ?: obfToDeobfClassMap[obfTypeDot.replace('.', '$')]
+                        ?: obfTypeDot
+                val canon = canonicalDeobfClass(namedType)
+                deobfFieldTypeMap.getOrPut(ownerCanon) { mutableMapOf() }[deobfField] = canon
+                return canon
+            }
+        }
+    }
+
+    return reflectDeobfFieldType(ownerCanon, deobfField)
+}
+
+private fun recordMethodUse(
+    ownerDeobf: String,
+    methodName: String,
+    arity: Int,
+    hints: List<String>,
+    found: MutableList<MethodUse>
+) {
+    val owners = buildList {
+        val canon = canonicalDeobfClass(ownerDeobf)
+        add(canon)
+        addAll(classClosureDeobf(canon))
+    }.distinct()
+
+    val hasName = owners.any { deobfMethodOverloads[it]?.containsKey(methodName) == true }
+    val hasArity = owners.any {
+        deobfToObfMethodByArity[it]?.get(methodName)?.isNotEmpty() == true
+    }
+
+    mdbg { "[KS-method] probe owner=$ownerDeobf meth=$methodName/$arity hasName=$hasName hasArity=$hasArity (owners=${owners.size})" }
+
+    if (hasName || hasArity) {
+        found += MethodUse(ownerDeobf, methodName, arity, hints)
+        mdbg { "[KS-method] ADD use owner=$ownerDeobf meth=$methodName/$arity hints=$hints (tables)" }
+        return
+    }
+
+    val pick = mappingPickOnOwner(ownerDeobf, methodName, arity, hints)
+        ?: run {
+            val ret = reflectMethodReturnType(ownerDeobf, methodName, arity, hints)
+            if (ret != null) MappingPick(methodName, ret) else null
+        }
+
+    if (pick != null) {
+        found += MethodUse(ownerDeobf, methodName, arity, hints)
+        mdbg { "[KS-method] ADD use owner=$ownerDeobf meth=$methodName/$arity (fallback pick ok: obf=${pick.obfName} ret=${pick.retDeobf})" }
+    } else {
+        mdbg { "[KS-method] skip use owner=$ownerDeobf meth=$methodName/$arity (no table match, picker failed)" }
+    }
 }
 
 fun findMethodUsages(ktFile: KtFile): Set<MethodUse> {
@@ -1135,139 +1455,160 @@ fun findMethodUsages(ktFile: KtFile): Set<MethodUse> {
     ktFile.accept(object : KtTreeVisitorVoid() {
 
         override fun visitNamedFunction(function: KtNamedFunction) {
-            env.push()
-            function.valueParameters.forEach { p ->
-                val t = p.typeReference?.text ?: return@forEach
-                val fq = resolveTypeRef(t, importSimpleNameMap)
-                p.name?.let { env.put(it, fq) }
+            env.withScope {
+                function.receiverTypeReference?.text
+                    ?.let { resolveTypeRef(it, importSimpleNameMap) }
+                    ?.let { env["this"] = it }
+
+                function.valueParameters.forEach { p ->
+                    val t = p.typeReference?.text ?: return@forEach
+                    val fq = resolveTypeRef(t, importSimpleNameMap)
+                    p.name?.let { env[it] = fq }
+                }
+
+                super.visitNamedFunction(function)
             }
-            super.visitNamedFunction(function)
-            env.pop()
         }
 
-        override fun visitProperty(property: KtProperty) {
-            property.typeReference?.text?.let { t ->
-                val fq = resolveTypeRef(t, importSimpleNameMap)
-                property.name?.let { env.put(it, fq) }
-            } ?: run {
-                val init = property.initializer as? KtCallExpression
-                val fq = init?.let { resolveCtorType(it, importSimpleNameMap) }
-                if (fq != null) property.name?.let { env.put(it, fq) }
+        override fun visitLambdaExpression(expr: KtLambdaExpression) {
+            env.withScope {
+                expr.valueParameters.forEach { p ->
+                    val t = p.typeReference?.text ?: return@forEach
+                    val fq = resolveTypeRef(t, importSimpleNameMap)
+                    p.name?.let { env[it] = fq }
+                }
+                super.visitLambdaExpression(expr)
             }
+        }
+
+        override fun visitForExpression(expr: KtForExpression) {
+            env.withScope {
+                val name = expr.loopParameter?.name
+                val range = expr.loopRange
+                if (name != null && range != null) {
+                    resolveExprType(range, env, importSimpleNameMap)?.let { env[name] = it }
+                }
+                super.visitForExpression(expr)
+            }
+        }
+
+        private fun resolveExprType(
+            expr: KtExpression,
+            env: TypeEnv,
+            importSimpleNameMap: Map<String, String>
+        ): String? = when (expr) {
+
+            is KtNameReferenceExpression -> {
+                val rn = expr.getReferencedName()
+                env[rn] ?: resolveTypeRef(rn, importSimpleNameMap)
+            }
+
+            is KtDotQualifiedExpression -> {
+                val ownerType = resolveExprType(expr.receiverExpression, env, importSimpleNameMap)
+                when (val sel = expr.selectorExpression) {
+                    is KtSimpleNameExpression -> {
+                        val field = sel.getReferencedName()
+                        if (ownerType != null) nextTypeAfterField(ownerType, field) else null
+                    }
+
+                    is KtCallExpression -> {
+                        val method = (sel.calleeExpression as? KtSimpleNameExpression)?.getReferencedName()
+                        val hints = argHints(sel, importSimpleNameMap)
+                        if (ownerType != null && method != null)
+                            strongPickOnOwner(ownerType, method, hints.size, hints).retDeobf
+                        else null
+                    }
+
+                    else -> null
+                }
+            }
+
+            is KtSafeQualifiedExpression -> {
+                val recv = expr.receiverExpression
+                val sel = expr.selectorExpression
+                resolveExprType(
+                    KtPsiFactory(expr.project).createExpression("${recv.text}.${sel?.text}") as KtExpression,
+                    env,
+                    importSimpleNameMap
+                )
+            }
+
+            is KtCallExpression -> {
+                resolveCtorType(expr, importSimpleNameMap)
+            }
+
+            else -> null
+        }
+
+
+        override fun visitProperty(property: KtProperty) {
             super.visitProperty(property)
+
+            val name = property.name ?: return
+
+            property.typeReference?.text?.let { typeText ->
+                env[name] = resolveTypeRef(typeText, importSimpleNameMap)
+                return
+            }
+
+            val init = property.initializer ?: return
+            var inferred: String? = null
+
+            when (init) {
+                is KtCallExpression -> {
+                    val parent = init.parent
+                    if (parent is KtDotQualifiedExpression) {
+                        val ownerType = resolveExprType(parent.receiverExpression, env, importSimpleNameMap)
+                        val method = (init.calleeExpression as? KtSimpleNameExpression)?.getReferencedName()
+                        val hints = argHints(init, importSimpleNameMap)
+                        if (ownerType != null && method != null) {
+                            inferred = strongPickOnOwner(ownerType, method, hints.size, hints).retDeobf
+                        }
+                    } else {
+                        inferred = resolveCtorType(init, importSimpleNameMap)
+                    }
+                }
+
+                is KtNameReferenceExpression -> {
+                    val rn = init.getReferencedName()
+                    inferred = env[rn] ?: resolveTypeRef(rn, importSimpleNameMap)
+                }
+
+                is KtDotQualifiedExpression -> {
+                    val ownerType = resolveExprType(init.receiverExpression, env, importSimpleNameMap)
+                    val fieldName = (init.selectorExpression as? KtSimpleNameExpression)?.getReferencedName()
+                    if (ownerType != null && fieldName != null) {
+                        inferred = deobfFieldTypeMap[ownerType]?.get(fieldName)
+                    }
+                }
+
+                else -> {
+                }
+            }
+
+            if (inferred != null) {
+                env[name] = canonicalDeobfClass(inferred!!)
+            }
         }
 
         override fun visitCallExpression(expr: KtCallExpression) {
             super.visitCallExpression(expr)
-            val callee = expr.calleeExpression as? KtSimpleNameExpression ?: return
-            val methodName = callee.getReferencedName()
+
+            val methodName = (expr.calleeExpression as? KtSimpleNameExpression)?.getReferencedName() ?: return
             val dot = expr.parent as? KtDotQualifiedExpression ?: return
-            val qualifierExpr = dot.receiverExpression
 
-            val candidates = mutableListOf<String>()
-
-            when (val q = qualifierExpr) {
-
-                is KtNameReferenceExpression -> {
-                    val qn = q.getReferencedName()
-                    importSimpleNameMap[qn]?.let { candidates += canonicalDeobfClass(it) }
-                    if (deobfToObfClassMap.containsKey(qn)) candidates += canonicalDeobfClass(qn)
-                }
-
-                is KtDotQualifiedExpression -> {
-                    val innerCall = q.selectorExpression as? KtCallExpression
-                    if (innerCall != null) {
-                        val ownerExpr = q.receiverExpression
-                        val innerOwnerDeobf = when (ownerExpr) {
-                            is KtNameReferenceExpression -> {
-                                val qn = ownerExpr.getReferencedName()
-                                canonicalDeobfClass(importSimpleNameMap[qn] ?: qn)
-                            }
-
-                            is KtDotQualifiedExpression -> canonicalDeobfClass(ownerExpr.text)
-                            else -> null
-                        }
-
-                        val innerName = (innerCall.calleeExpression as? KtSimpleNameExpression)?.getReferencedName()
-                        val innerArity = innerCall.valueArguments.size
-                        val innerHints = innerCall.valueArguments.map { a ->
-                            val ex = a.getArgumentExpression()
-                            when (ex) {
-                                is KtStringTemplateExpression -> "java/lang/String"
-                                is KtConstantExpression -> when (ex.text.lowercase()) {
-                                    "true", "false" -> "Z"
-                                    else -> if (ex.text.contains('.')) "D" else "I"
-                                }
-
-                                is KtNameReferenceExpression -> ex.getReferencedName()
-                                is KtCallExpression -> resolveCtorType(ex, importSimpleNameMap)?.replace('.', '/')
-                                else -> ""
-                            } ?: ""
-                        }
-
-                        val ret = if (innerOwnerDeobf != null && innerName != null)
-                            deobfMethodReturnType(innerOwnerDeobf, innerName, innerArity, innerHints)
-                                ?: obfMethodReturnType(innerOwnerDeobf, innerName, innerArity, innerHints)
-                                ?: reflectMethodReturnType(innerOwnerDeobf, innerName, innerArity, innerHints)
-                        else null
-
-                        if (ret != null) candidates += canonicalDeobfClass(ret)
-                    } else {
-                        candidates += canonicalDeobfClass(q.text)
-                    }
-                }
-
-                is KtCallExpression -> {
-                    val innerDot = qualifierExpr.parent as? KtDotQualifiedExpression
-                    val ownerExpr = innerDot?.receiverExpression
-                    val ownerDeobf = when (ownerExpr) {
-                        is KtNameReferenceExpression -> {
-                            val qn = ownerExpr.getReferencedName()
-                            canonicalDeobfClass(importSimpleNameMap[qn] ?: qn)
-                        }
-
-                        is KtDotQualifiedExpression -> canonicalDeobfClass(ownerExpr.text)
-                        else -> null
-                    }
-
-                    var innerName: String? = null
-                    val innerCallee = q.calleeExpression as? KtSimpleNameExpression
-                    if (innerCallee != null) innerName = innerCallee.getReferencedName()
-                    val innerArity = q.valueArguments.size
-                    val innerHints = q.valueArguments.map { a ->
-                        val ex = a.getArgumentExpression()
-                        val h = when (ex) {
-                            is KtStringTemplateExpression -> "java/lang/String"
-                            is KtConstantExpression -> when (ex.text.lowercase()) {
-                                "true", "false" -> "Z"
-                                else -> if (ex.text.contains('.')) "D" else "I"
-                            }
-
-                            is KtNameReferenceExpression -> ex.getReferencedName()
-                            is KtCallExpression -> resolveCtorType(ex, importSimpleNameMap)?.replace('.', '/')
-                            else -> ""
-                        } ?: ""
-                        h
-                    }
-
-                    val ret = if (ownerDeobf != null && innerName != null)
-                        deobfMethodReturnType(ownerDeobf, innerName, innerArity, innerHints)
-                            ?: obfMethodReturnType(ownerDeobf, innerName, innerArity, innerHints)
-                            ?: reflectMethodReturnType(ownerDeobf, innerName, innerArity, innerHints)
-                    else null
-
-                    if (ret != null) candidates += canonicalDeobfClass(ret)
-
-                    mdbg {
-                        "usage-scan recv=CALL innerOwner=${ownerDeobf ?: "?"} innerName=${innerName ?: "?"}/$innerArity " +
-                                "innerRet=${ret ?: "null"} → candidates=${candidates}"
-                    }
-                }
+            val ownerDeobf = resolveExprType(dot.receiverExpression, env, importSimpleNameMap) ?: run {
+                val head = (dot.receiverExpression as? KtNameReferenceExpression)?.getReferencedName()
+                val headType = head?.let { env[it] ?: resolveTypeRef(it, importSimpleNameMap) }
+                if (headType == null) {
+                    mdbg { "skip call ${expr.text}: cannot resolve owner type" }
+                    return
+                } else canonicalDeobfClass(headType)
             }
 
             val hints = expr.valueArguments.map { a ->
                 val ex = a.getArgumentExpression()
-                val h = when (ex) {
+                when (ex) {
                     is KtStringTemplateExpression -> "java/lang/String"
                     is KtConstantExpression -> when (ex.text.lowercase()) {
                         "true", "false" -> "Z"
@@ -1278,25 +1619,37 @@ fun findMethodUsages(ktFile: KtFile): Set<MethodUse> {
                     is KtCallExpression -> resolveCtorType(ex, importSimpleNameMap)?.replace('.', '/')
                     else -> ""
                 } ?: ""
-                h
             }
             val arity = hints.size
 
-            var added = false
-            for (owner in candidates) {
-                val hasName = deobfMethodOverloads[owner]?.containsKey(methodName) == true
-                val hasArity = deobfToObfMethodByArity[owner]?.get(methodName)?.isNotEmpty() == true
-                mdbg { "probe owner=$owner meth=$methodName/$arity hasName=$hasName hasArity=$hasArity" }
-                if (hasName || hasArity) {
-                    found += MethodUse(owner, methodName, arity, hints)
-                    mdbg { "ADD use owner=$owner meth=$methodName/$arity hints=$hints" }
-                    added = true
-                    break
-                }
+            val owners = buildList {
+                val canon = canonicalDeobfClass(ownerDeobf)
+                add(canon)
+                addAll(classClosureDeobf(canon))
+            }.distinct()
+
+            val hasName = owners.any { deobfMethodOverloads[it]?.containsKey(methodName) == true }
+            val hasArity = owners.any { deobfToObfMethodByArity[it]?.get(methodName)?.isNotEmpty() == true }
+
+            mdbg { "probe owner=$ownerDeobf meth=$methodName/$arity hasName=$hasName hasArity=$hasArity (owners=${owners.size})" }
+
+            if (hasName || hasArity) {
+                found += MethodUse(ownerDeobf, methodName, arity, hints)
+                mdbg { "ADD use owner=$ownerDeobf meth=$methodName/$arity hints=$hints (tables)" }
+                return
             }
-            if (!added && candidates.isNotEmpty()) {
-                found += MethodUse(candidates.first(), methodName, arity, hints)
-                mdbg { "ADD fallback use owner=${candidates.first()} meth=$methodName/$arity (no table match)" }
+
+            val pick = mappingPickOnOwner(ownerDeobf, methodName, arity, hints)
+                ?: run {
+                    val ret = reflectMethodReturnType(ownerDeobf, methodName, arity, hints)
+                    if (ret != null) MappingPick(methodName, ret) else null
+                }
+
+            if (pick != null) {
+                found += MethodUse(ownerDeobf, methodName, arity, hints)
+                mdbg { "ADD use owner=$ownerDeobf meth=$methodName/$arity (fallback ok: obf=${pick.obfName} ret=${pick.retDeobf})" }
+            } else {
+                mdbg { "skip use owner=$ownerDeobf meth=$methodName/$arity (no table match, picker failed)" }
             }
         }
 
@@ -1304,7 +1657,8 @@ fun findMethodUsages(ktFile: KtFile): Set<MethodUse> {
     })
 
     env.pop()
-    return found
+    return found.distinctBy { Triple(it.className, it.method, it.arity) }.toSet()
+
 }
 
 
@@ -1607,7 +1961,7 @@ private fun scoreByHints(paramTypes: Array<Class<*>>, hints: List<String>): Int 
     while (i < n) {
         val h = hints[i]
         if (h.isNotEmpty()) {
-            val ph = hintOfClass(paramTypes[i])
+            val ph = classToJvmAtom(paramTypes[i])
             if (ph.contains(h)) score += 3
         }
         i++
@@ -1622,78 +1976,60 @@ private fun reflectMethodReturnType(
     arity: Int,
     hints: List<String>
 ): String? {
-    val cls = tryLoadEither(ownerDeobf) ?: return null
+    val root = tryLoadEither(ownerDeobf) ?: return null
 
-    var obfGuess: String? = deobfToObfMethodByArity[ownerDeobf]?.get(methodNameOrObf)?.get(arity)
-    if (obfGuess.isNullOrEmpty()) {
-        obfGuess = chooseOverloadByHints(ownerDeobf, methodNameOrObf, arity, hints)
+    val seen = LinkedHashSet<Class<*>>()
+    val q = ArrayDeque<Class<*>>()
+    q.add(root)
+    while (q.isNotEmpty()) {
+        val c = q.removeFirst()
+        if (!seen.add(c)) continue
+        c.superclass?.let(q::add)
+        c.interfaces?.forEach(q::add)
     }
 
     val candidates = ArrayList<java.lang.reflect.Method>()
-    for (m in cls.methods) {
-        val pn = m.parameterCount
-        if (pn != arity) continue
-        val name = m.name
-        if (name == methodNameOrObf || (obfGuess != null && name == obfGuess)) {
-            candidates += m
+    val seenKeys = HashSet<String>()
+    fun consider(m: java.lang.reflect.Method) {
+        if (m.parameterCount != arity) return
+        val k = methodKey(m)
+        if (!seenKeys.add(k)) return
+
+        var accept = (m.name == methodNameOrObf)
+        if (!accept) {
+            val declOwner = normalizeOwnerForBackMap(m.declaringClass.name)
+            val back = obfToDeobfMethodMap[declOwner]
+            if (back != null && back[k] == methodNameOrObf) accept = true
         }
+        if (accept) candidates += m
     }
-    if (candidates.isEmpty()) {
-        for (m in cls.declaredMethods) {
-            val pn = m.parameterCount
-            if (pn != arity) continue
-            val name = m.name
-            if (name == methodNameOrObf || (obfGuess != null && name == obfGuess)) {
-                candidates += m
-            }
-        }
-    }
-    if (candidates.isEmpty()) {
-        val obfOwner = deobfToObfClassMap[ownerDeobf]
-        val back = if (obfOwner != null) obfToDeobfMethodMap[obfOwner] else null
-        if (back != null) {
-            for (m in cls.methods) {
-                if (m.parameterCount != arity) continue
-                val name = m.name
-                val key = buildString {
-                    append(name).append('(')
-                    val pts = m.parameterTypes
-                    for (t in pts) append(hintOfClass(t))
-                    append(')')
-                    append(hintOfClass(m.returnType))
-                }
-                val deobfName = back[key]
-                if (deobfName == methodNameOrObf) candidates += m
-            }
-            if (candidates.isEmpty()) {
-                for (m in cls.declaredMethods) {
-                    if (m.parameterCount != arity) continue
-                    val name = m.name
-                    val key = buildString {
-                        append(name).append('(')
-                        val pts = m.parameterTypes
-                        for (t in pts) append(hintOfClass(t))
-                        append(')')
-                        append(hintOfClass(m.returnType))
-                    }
-                    val deobfName = back[key]
-                    if (deobfName == methodNameOrObf) candidates += m
-                }
-            }
-        }
+
+    for (c in seen) {
+        c.declaredMethods.forEach(::consider)
+        c.methods.forEach(::consider)
     }
 
     if (candidates.isEmpty()) return null
 
     var best: java.lang.reflect.Method? = null
     var bestScore = Int.MIN_VALUE
+    var unique = true
     for (m in candidates) {
-        val s = scoreByHints(m.parameterTypes, hints)
+        val s = scoreByHints(m.parameterTypes, hints, arity)
         if (s > bestScore) {
-            bestScore = s; best = m
+            best = m; bestScore = s; unique = true
+        } else if (s == bestScore) unique = false
+    }
+    if (!unique && best != null) {
+        for (m in candidates) {
+            val s = scoreByHints(m.parameterTypes, hints, arity)
+            if (s == bestScore && m.declaringClass == root) {
+                best = m; break
+            }
         }
     }
-    val chosen = best ?: candidates[0]
+
+    val chosen = best!!
     val ret = chosen.returnType
     if (ret == java.lang.Void.TYPE) return null
 
@@ -1708,7 +2044,7 @@ private fun reflectMethodReturnType(
 
 private fun classToJvmAtom(c: Class<*>): String {
     if (c.isArray) {
-        var t = c;
+        var t = c
         val sb = StringBuilder()
         while (t.isArray) {
             sb.append('['); t = t.componentType
@@ -1722,6 +2058,7 @@ private fun classToJvmAtom(c: Class<*>): String {
             java.lang.Long.TYPE -> sb.append('J').toString()
             java.lang.Short.TYPE -> sb.append('S').toString()
             java.lang.Boolean.TYPE -> sb.append('Z').toString()
+            java.lang.Void.TYPE -> sb.append('V').toString()
             else -> sb.append('L').append(t.name.replace('.', '/')).append(';').toString()
         }
     }
@@ -1796,7 +2133,8 @@ private fun tryLoadEither(name: String): Class<*>? {
     return null
 }
 
-data class ReflectPick(val obfName: String, val retDeobf: String?)
+
+private data class ReflectPick(val obfName: String, val retDeobf: String?)
 
 private fun reflectSelectMethod(
     ownerDeobf: String,
@@ -2317,6 +2655,12 @@ class TestParser {
                     .keys
                 foundMethods.forEach { (className, deobfMethod, arity, hints) ->
                     mdbg { "rename try owner=$className meth=$deobfMethod/$arity hints=$hints" }
+                    val where = (listOf(className) + classClosureDeobf(className)).firstOrNull {
+                        deobfMethodOverloads[it]?.containsKey(deobfMethod) == true
+                    }
+                    if (where != null && where != className) {
+                        mdbg { "  note: $deobfMethod/$arity declared on supertype $where" }
+                    }
 
                     val pick = strongPickOnOwner(className, deobfMethod, arity, hints)
                     val obfMethod = pick.obfName

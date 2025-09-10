@@ -1,18 +1,5 @@
-object MyObj {
-    @JvmStatic
-    val answer = 42
-}
+import net.minecraft.client.Minecraft
 
-object MyOtherObj {
-    @JvmStatic
-    fun bar() {
-    }
-}
-
-class Foo {
-    companion object {
-        @JvmStatic
-        fun baz() {
-        }
-    }
+fun drawRoundedRect(mc: Minecraft) {
+    mc.level?.dimensionType()
 }
