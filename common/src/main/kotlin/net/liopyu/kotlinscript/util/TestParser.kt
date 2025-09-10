@@ -9,6 +9,7 @@ import net.fabricmc.loader.impl.lib.mappingio.tree.MappingTree
 import org.jetbrains.kotlin.cli.common.environment.setIdeaIoUseFallback
 import org.jetbrains.kotlin.cli.jvm.compiler.EnvironmentConfigFiles
 import org.jetbrains.kotlin.cli.jvm.compiler.KotlinCoreEnvironment
+import org.jetbrains.kotlin.com.intellij.openapi.project.Project
 import org.jetbrains.kotlin.com.intellij.openapi.util.Disposer
 import org.jetbrains.kotlin.com.intellij.psi.PsiComment
 import org.jetbrains.kotlin.com.intellij.psi.PsiElement
@@ -17,6 +18,7 @@ import org.jetbrains.kotlin.com.intellij.psi.PsiRecursiveElementWalkingVisitor
 import org.jetbrains.kotlin.config.CompilerConfiguration
 import org.jetbrains.kotlin.idea.KotlinLanguage
 import org.jetbrains.kotlin.psi.*
+import org.jetbrains.kotlin.psi.psiUtil.anyDescendantOfType
 import java.io.File
 import java.io.InputStreamReader
 
@@ -170,7 +172,6 @@ fun getDevMappingFile(): File {
     val mappingsDir = File(resource.toURI())
     if (!mappingsDir.exists()) mappingsDir.mkdirs()
     val mappingFile = File(mappingsDir, "mappings.json")
-    logger.info("getDevMappingFile(): Using dev mappings file: ${mappingFile.absolutePath}")
     return mappingFile
 }
 
@@ -182,20 +183,14 @@ fun buildMappingsIfNeeded(tree: MappingTree, obfNamespace: Int, deobfNamespace: 
         val mappingFile = getDevMappingFile()
         if (!mappingFile.exists()) {
             buildDeobfToObfMapFromTree(tree, obfNamespace, deobfNamespace)
-            logger.info("Generated mapping file at: ${mappingFile.absolutePath}")
         } else {
             loadMappingsFromResource()
-            logger.info("Loaded existing mapping file at: ${mappingFile.absolutePath}")
         }
         saveMappingsToJson()
     }
 }
 
 fun isDevEnvironment(): Boolean {
-    if (!FabricLoader.getInstance().isDevelopmentEnvironment)
-        LogUtils.getLogger().info("Im inside a production environment!")
-    else
-        LogUtils.getLogger().info("Im inside a dev environment!")
     return FabricLoader.getInstance().isDevelopmentEnvironment
 }
 
@@ -449,7 +444,6 @@ fun findChainedFieldRewrites(ktFile: KtFile, source: String): Map<Int, List<Pair
             var curDeobfType = canonicalDeobfClass(startType)
             val curObfType = { deobfToObfClassMap[curDeobfType] }
 
-            dbg { "expr='${expr.text}' head='${headExpr.text}' curDeobfType='$curDeobfType' obfType='${curObfType()}'" }
 
             val outParts = ArrayList<String>()
             outParts.add(outHeadText!!)
@@ -468,7 +462,6 @@ fun findChainedFieldRewrites(ktFile: KtFile, source: String): Map<Int, List<Pair
 
                         val pick = strongPickOnOwner(curDeobfType, mn, arity, hints)
                         outParts += call.text
-                        dbg { " step[$i]: call '$mn/$arity' owner='$curDeobfType' -> next='${pick.retDeobf ?: "void"}'" }
 
                         if (pick.retDeobf == null) {
                             var j = i + 1
@@ -496,7 +489,6 @@ fun findChainedFieldRewrites(ktFile: KtFile, source: String): Map<Int, List<Pair
                     var next = nextTypeAfterField(curDeobfType, token)
                     if (next == null) next = reflectDeobfFieldType(curDeobfType, token)
 
-                    dbg { " step[$i]: deobf field '$token' -> obf '$obfFromDeobf', nextDeobfType='${next ?: "null"}'" }
 
                     if (next == null) {
                         var j = i + 1
@@ -521,14 +513,12 @@ fun findChainedFieldRewrites(ktFile: KtFile, source: String): Map<Int, List<Pair
                     outParts.add(token)
                     var next = deobfFieldTypeMap[curDeobfType]?.get(deobfField)
                     if (next == null) next = reflectDeobfFieldType(curDeobfType, deobfField)
-                    dbg { " step[$i]: obf field '$token' (deobf='$deobfField'), nextDeobfType='${next ?: "null"}'" }
                     if (next == null) break
                     curDeobfType = canonicalDeobfClass(next)
                     i++
                     continue
                 }
 
-                dbg { " step[$i]: token '$token' did not match fields of '$curDeobfType' (or '${obfOwner}')" }
                 break
             }
 
@@ -538,9 +528,6 @@ fun findChainedFieldRewrites(ktFile: KtFile, source: String): Map<Int, List<Pair
                 val lineIdx = lineOf(expr.textRange.startOffset)
                 val list = rewritesByLine.getOrPut(lineIdx) { mutableListOf() }
                 list.add(from to to)
-                dbg { " rewrite: '$from' -> '$to'" }
-            } else {
-                dbg { " no rewrite for '${expr.text}'" }
             }
         }
     })
@@ -801,11 +788,6 @@ fun buildDeobfToObfMapFromTree(tree: MappingTree, obfNamespace: Int, deobfNamesp
 
         classCount++
     }
-
-    logger.info("buildDeobfToObfMapFromTree: Finished! Total mapped classes: $classCount, skipped classes: $skippedClassCount")
-    logger.info("  deobfToObfClassMap size: ${deobfToObfClassMap.size}")
-    logger.info("  deobfToObfMethodMap size: ${deobfToObfMethodMap.size}")
-    logger.info("  deobfToObfFieldMap size: ${deobfToObfFieldMap.size}")
 }
 
 data class StrongPick(val obfName: String?, val retDeobf: String?)
@@ -825,6 +807,83 @@ private fun strongPickOnOwner(
     return StrongPick(null, null)
 }
 
+data class TextEdit(val start: Int, val end: Int, val newText: String)
+
+private fun applyTextEdits(src: String, edits: List<TextEdit>): String {
+    if (edits.isEmpty()) return src
+    val sb = StringBuilder(src)
+    for (e in edits.sortedByDescending { it.start }) sb.replace(e.start, e.end, e.newText)
+    return sb.toString()
+}
+
+private fun lambdaProducesValue(lambda: KtLambdaExpression): Boolean {
+    val body = lambda.bodyExpression ?: return false
+    if (body.anyDescendantOfType<KtReturnExpression>()) return true
+    val last = body.statements.lastOrNull() ?: return false
+    return when (last) {
+        is KtTryExpression -> false
+        is KtBinaryExpression -> true
+        is KtCallExpression, is KtNameReferenceExpression, is KtQualifiedExpression -> true
+        else -> last.text.isNotBlank()
+    }
+}
+
+fun fixVoidLambdaFunctionTypeReturns(project: Project, source: String): String {
+    val psiFileFactory = PsiFileFactory.getInstance(project)
+    val ktFile = psiFileFactory.createFileFromText("after.kts", KotlinLanguage.INSTANCE, source) as KtFile
+    val edits = mutableListOf<TextEdit>()
+
+    ktFile.accept(object : KtTreeVisitorVoid() {
+        override fun visitProperty(property: KtProperty) {
+            super.visitProperty(property)
+            val ftype = property.typeReference?.typeElement as? KtFunctionType ?: return
+            val lambda = property.initializer as? KtLambdaExpression ?: return
+            if (lambdaProducesValue(lambda)) return
+
+            val retRef = ftype.returnTypeReference
+            if (retRef != null && retRef.text != "Unit" && retRef.text != "kotlin.Unit") {
+                edits += TextEdit(retRef.textRange.startOffset, retRef.textRange.endOffset, "Unit")
+            }
+        }
+    })
+
+    return applyTextEdits(source, edits)
+}
+
+private fun lambdaHasValueResult(lambda: KtLambdaExpression): Boolean {
+    val body = lambda.bodyExpression ?: return false
+    val last = body.statements.lastOrNull() ?: return false
+    return last !is KtReturnExpression &&
+            last !is KtDeclaration &&
+            last.text.isNotBlank() &&
+            (last !is KtCallExpression || lambda.valueParameters.isNotEmpty())
+}
+
+fun normalizeLambdaFunctionTypeReturns(ktFile: KtFile, source: String): String {
+    val edits = mutableListOf<TextEdit>()
+
+    ktFile.accept(object : KtTreeVisitorVoid() {
+        override fun visitProperty(property: KtProperty) {
+            super.visitProperty(property)
+
+            val typeRef = property.typeReference?.typeElement as? KtFunctionType ?: return
+            val lambda = property.initializer as? KtLambdaExpression ?: return
+
+            if (!lambdaHasValueResult(lambda)) {
+                val retRef = typeRef.returnTypeReference ?: return
+                if (retRef.text != "Unit" && retRef.text != "kotlin.Unit") {
+                    edits += TextEdit(
+                        start = retRef.textRange.startOffset,
+                        end = retRef.textRange.endOffset,
+                        newText = "Unit"
+                    )
+                }
+            }
+        }
+    })
+
+    return applyTextEdits(source, edits)
+}
 
 private fun reflectPickOnOwner(
     ownerDeobf: String,
@@ -929,8 +988,6 @@ fun debugCheckDimensionType() {
         add(owner)
         addAll(classClosureDeobf(owner))
     }
-    val where = owners.filter { deobfMethodOverloads[it]?.containsKey(method) == true }
-    logger.info("[KS-debug] dimensionType present on: $where")
 }
 
 /**
@@ -1014,11 +1071,9 @@ private fun mappingPickOnOwner(
         }
 
         if (bestObf != null) {
-            mdbg { "[KS-pick] mappingPickOnOwner deobf=$nameOrObf arity=$arity -> obf=$bestObf ret=$bestRet via=$bestVia where=$bestWhere (owners=${owners.size})" }
             return MappingPick(bestObf!!, bestRet)
         }
 
-        mdbg { "[KS-pick] mappingPickOnOwner deobf=$nameOrObf arity=$arity -> no match in closure (owners=${owners.size})" }
         return null
     }
 
@@ -1048,12 +1103,34 @@ private fun mappingPickOnOwner(
     }
 
     if (bestObf != null) {
-        mdbg { "[KS-pick] mappingPickOnOwner obf=$nameOrObf arity=$arity -> ret=$bestRet via=$bestVia where=$bestWhere (owners=${owners.size})" }
         return MappingPick(bestObf!!, bestRet)
     }
 
-    mdbg { "[KS-pick] mappingPickOnOwner obf=$nameOrObf arity=$arity -> no match in closure (owners=${owners.size})" }
     return null
+}
+
+private fun fullUserTypeName(u: KtUserType): String? {
+    val segs = ArrayDeque<String>()
+    var cur: KtUserType? = u
+    while (cur != null) {
+        val name = cur.referencedName ?: return null
+        segs.addFirst(name)
+        cur = cur.qualifier
+    }
+    return segs.joinToString(".")
+}
+
+fun findQualifiedClassUsages(ktFile: KtFile): Map<String, String> {
+    val repl = mutableMapOf<String, String>()
+    ktFile.accept(object : KtTreeVisitorVoid() {
+        override fun visitUserType(type: KtUserType) {
+            super.visitUserType(type)
+            val fq = fullUserTypeName(type) ?: return
+            val obf = deobfToObfClassMap[fq] ?: return
+            repl[fq] = obf.replace('$', '.')
+        }
+    })
+    return repl
 }
 
 
@@ -1419,11 +1496,9 @@ private fun recordMethodUse(
         deobfToObfMethodByArity[it]?.get(methodName)?.isNotEmpty() == true
     }
 
-    mdbg { "[KS-method] probe owner=$ownerDeobf meth=$methodName/$arity hasName=$hasName hasArity=$hasArity (owners=${owners.size})" }
 
     if (hasName || hasArity) {
         found += MethodUse(ownerDeobf, methodName, arity, hints)
-        mdbg { "[KS-method] ADD use owner=$ownerDeobf meth=$methodName/$arity hints=$hints (tables)" }
         return
     }
 
@@ -1435,9 +1510,6 @@ private fun recordMethodUse(
 
     if (pick != null) {
         found += MethodUse(ownerDeobf, methodName, arity, hints)
-        mdbg { "[KS-method] ADD use owner=$ownerDeobf meth=$methodName/$arity (fallback pick ok: obf=${pick.obfName} ret=${pick.retDeobf})" }
-    } else {
-        mdbg { "[KS-method] skip use owner=$ownerDeobf meth=$methodName/$arity (no table match, picker failed)" }
     }
 }
 
@@ -1601,7 +1673,6 @@ fun findMethodUsages(ktFile: KtFile): Set<MethodUse> {
                 val head = (dot.receiverExpression as? KtNameReferenceExpression)?.getReferencedName()
                 val headType = head?.let { env[it] ?: resolveTypeRef(it, importSimpleNameMap) }
                 if (headType == null) {
-                    mdbg { "skip call ${expr.text}: cannot resolve owner type" }
                     return
                 } else canonicalDeobfClass(headType)
             }
@@ -1631,11 +1702,9 @@ fun findMethodUsages(ktFile: KtFile): Set<MethodUse> {
             val hasName = owners.any { deobfMethodOverloads[it]?.containsKey(methodName) == true }
             val hasArity = owners.any { deobfToObfMethodByArity[it]?.get(methodName)?.isNotEmpty() == true }
 
-            mdbg { "probe owner=$ownerDeobf meth=$methodName/$arity hasName=$hasName hasArity=$hasArity (owners=${owners.size})" }
 
             if (hasName || hasArity) {
                 found += MethodUse(ownerDeobf, methodName, arity, hints)
-                mdbg { "ADD use owner=$ownerDeobf meth=$methodName/$arity hints=$hints (tables)" }
                 return
             }
 
@@ -1647,9 +1716,6 @@ fun findMethodUsages(ktFile: KtFile): Set<MethodUse> {
 
             if (pick != null) {
                 found += MethodUse(ownerDeobf, methodName, arity, hints)
-                mdbg { "ADD use owner=$ownerDeobf meth=$methodName/$arity (fallback ok: obf=${pick.obfName} ret=${pick.retDeobf})" }
-            } else {
-                mdbg { "skip use owner=$ownerDeobf meth=$methodName/$arity (no table match, picker failed)" }
             }
         }
 
@@ -2143,10 +2209,8 @@ private fun reflectSelectMethod(
     hints: List<String>
 ): ReflectPick? {
     val cls = tryLoadEither(ownerDeobf) ?: run {
-        mdbg { "reflect owner load FAIL: $ownerDeobf" }
         return null
     }
-    mdbg { "reflect owner=${cls.name} query=$desiredNameOrObf/$arity" }
 
     val cands = ArrayList<java.lang.reflect.Method>()
     fun collect(ms: Array<java.lang.reflect.Method>) {
@@ -2173,7 +2237,6 @@ private fun reflectSelectMethod(
     collect(cls.methods)
     collect(cls.declaredMethods)
 
-    mdbg { "reflect candidates=${cands.size} for $desiredNameOrObf (owner=${cls.name})" }
     if (cands.isEmpty()) return null
 
     var best: java.lang.reflect.Method? = null
@@ -2184,7 +2247,6 @@ private fun reflectSelectMethod(
     while (i < cands.size) {
         val m = cands[i]
         val s = scoreByHints(m.parameterTypes, hints, arity)
-        mdbg { "  cand ${m.declaringClass.name}.${m.name}/${m.parameterCount} score=$s sig=${methodKey(m)}" }
         if (s > bestScore) {
             best = m; bestScore = s; unique = true
         } else if (s == bestScore) unique = false
@@ -2213,7 +2275,6 @@ private fun reflectSelectMethod(
             ?: obfRet
         canonicalDeobfClass(named)
     }
-    mdbg { "reflect PICK ${chosen.declaringClass.name}.${chosen.name}/${chosen.parameterCount} ret=${retDeobf ?: "void"}" }
     return ReflectPick(chosen.name, retDeobf)
 }
 
@@ -2315,7 +2376,6 @@ class TestParser {
         fun main(string: String): String {
             setIdeaIoUseFallback()
             val disposable = Disposer.newDisposable()
-            val logger = LogUtils.getLogger()
 
             val environment = KotlinCoreEnvironment.createForProduction(
                 disposable,
@@ -2324,26 +2384,37 @@ class TestParser {
             )
 
             val psiFileFactory = PsiFileFactory.getInstance(environment.project)
+
             val ktFile = psiFileFactory.createFileFromText(
                 "test.kts",
                 KotlinLanguage.INSTANCE,
                 string
             ) as KtFile
 
-            val importLineMap = buildObfuscatedImports(ktFile)
-            val foundClasses = findClassUsages(ktFile)
-            val foundMethods = findMethodUsages(ktFile)
+            val normalizedSource = normalizeLambdaFunctionTypeReturns(ktFile, string)
 
-            val foundFields = findFieldUsages(ktFile)
-            val nested = findNestedQualifiedClassUsages(ktFile)
-            val overrideRenames = findOverrideRenames(ktFile)
-            traceAll(ktFile, logger)
-            val qualifierMap = buildImportQualifierMap(ktFile)
-            val protectedByLine = collectProtectedRangesByLine(ktFile, string)
-            val chained = findChainedFieldRewrites(ktFile, string)
+            val ktFile2 = psiFileFactory.createFileFromText(
+                "test.kts",
+                KotlinLanguage.INSTANCE,
+                normalizedSource
+            ) as KtFile
+
+            val importLineMap = buildObfuscatedImports(ktFile2)
+            val foundClasses = findClassUsages(ktFile2)
+            val foundMethods = findMethodUsages(ktFile2)
+            val foundFields = findFieldUsages(ktFile2)
+            val nested = findNestedQualifiedClassUsages(ktFile2)
+            val overrideRenames = findOverrideRenames(ktFile2)
+            traceAll(ktFile2, logger)
+            val qualifierMap = buildImportQualifierMap(ktFile2)
+
+            val protectedByLine = collectProtectedRangesByLine(ktFile2, normalizedSource)
+            val chained = findChainedFieldRewrites(ktFile2, normalizedSource)
+
+            val qualified = findQualifiedClassUsages(ktFile2)
 
             val result = replaceObfuscated(
-                string,
+                normalizedSource,
                 foundClasses,
                 foundMethods,
                 foundFields,
@@ -2351,18 +2422,15 @@ class TestParser {
                 overrideRenames,
                 protectedByLine,
                 qualifierMap,
-                chained
+                chained,
+                qualified
             )
 
-
-            logger.info(
-                "getInstance map: " + deobfToObfMethodByArity["net.minecraft.client.Minecraft"]?.get("getInstance")
-                    ?.get(0)
-            )
-
+            val fixed = fixVoidLambdaFunctionTypeReturns(environment.project, result)
             Disposer.dispose(disposable)
-            return result
+            return fixed
         }
+
 
         fun findNestedQualifiedClassUsages(ktFile: KtFile): Map<String, String> {
             val importSimple = mutableMapOf<String, String>()
@@ -2451,6 +2519,12 @@ class TestParser {
             ktFile.accept(object : KtTreeVisitorVoid() {
                 override fun visitUserType(type: KtUserType) {
                     super.visitUserType(type)
+
+                    val parent = type.parent
+                    val isFunctionTypeReturn =
+                        parent is KtTypeReference && parent.parent is KtFunctionType
+                    if (isFunctionTypeReturn) return
+
                     type.referencedName?.let { name ->
                         if (deobfToObfClassMap.containsKey(name) ||
                             deobfToObfClassMap.containsKey(name.substringAfterLast('$'))
@@ -2579,7 +2653,8 @@ class TestParser {
             overrideRenameMap: Map<String, String>,
             protectedByLine: Map<Int, List<IntRange>>,
             importQualifierMap: Map<String, String>,
-            chainedFieldRewritesByLine: Map<Int, List<Pair<String, String>>>
+            chainedFieldRewritesByLine: Map<Int, List<Pair<String, String>>>,
+            qualifiedClassReplacements: Map<String, String>
         ): String {
             val lines = source.lines().toMutableList()
             for (i in lines.indices) {
@@ -2588,9 +2663,7 @@ class TestParser {
                 chainedFieldRewritesByLine[i]
                     ?.sortedByDescending { it.first.length }
                     ?.forEach { (from, to) ->
-                        dbg { "apply line[$i]: '$from' -> '$to'  (before='${line.trim()}')" }
                         line = safeReplaceLine(line, prot, Regex("""\b${Regex.escape(from)}\b"""), to)
-                        dbg { "apply line[$i]: after='${line.trim()}'" }
                     }
                 val importMatch = Regex("""^\s*import\s+(.+)$""").matchEntire(line.trim())
                 if (importMatch != null) {
@@ -2604,9 +2677,20 @@ class TestParser {
                 val (guarded, saved) = guardLine(line, prot)
                 line = guarded
                 nestedQualifiedClassReplacements.forEach { (from, to) ->
-                    line = safeReplaceLine(line, prot, Regex("""\b${Regex.escape(from)}\b"""), to)
+                    val rx = Regex("""\b(?:[A-Za-z_]\w*\.)*${Regex.escape(from)}\b""")
+                    line = safeReplaceLine(line, prot, rx, to)
                 }
-
+                qualifiedClassReplacements.keys
+                    .sortedByDescending { it.length }
+                    .forEach { from ->
+                        val to = qualifiedClassReplacements[from]!!
+                        line = safeReplaceLine(
+                            line,
+                            prot,
+                            Regex("""\b${Regex.escape(from)}\b"""),
+                            to
+                        )
+                    }
                 importQualifierMap.forEach { (simple, fq) ->
                     line = safeReplaceLine(line, prot, Regex("""(?<!\w)${Regex.escape(simple)}(?=\s*\.)"""), fq)
                 }
@@ -2626,10 +2710,12 @@ class TestParser {
                     val key = if (deobfToObfClassMap.containsKey(deobf)) deobf else deobf.substringAfterLast('$')
                     val obf = deobfToObfClassMap[key]
                     if (obf != null) {
-                        val src = obf.replace('$', '.')
-                        line = safeReplaceLine(line, emptyList(), Regex("""\b${Regex.escape(deobf)}\b"""), src)
+                        val to = obf.replace('$', '.')
+                        val rx = Regex("""(?<!\.)\b${Regex.escape(deobf)}\b""")
+                        line = safeReplaceLine(line, emptyList(), rx, to)
                     }
                 }
+
 
                 foundFields.forEach { (className, deobfField) ->
                     val obfClass0 = deobfToObfClassMap[className] ?: className
@@ -2654,13 +2740,6 @@ class TestParser {
                     .filter { entry -> entry.value.map { it.className }.distinct().size > 1 }
                     .keys
                 foundMethods.forEach { (className, deobfMethod, arity, hints) ->
-                    mdbg { "rename try owner=$className meth=$deobfMethod/$arity hints=$hints" }
-                    val where = (listOf(className) + classClosureDeobf(className)).firstOrNull {
-                        deobfMethodOverloads[it]?.containsKey(deobfMethod) == true
-                    }
-                    if (where != null && where != className) {
-                        mdbg { "  note: $deobfMethod/$arity declared on supertype $where" }
-                    }
 
                     val pick = strongPickOnOwner(className, deobfMethod, arity, hints)
                     val obfMethod = pick.obfName
@@ -2686,9 +2765,6 @@ class TestParser {
                                 obfMethod
                             )
                         }
-                        mdbg { "  DONE rename $className.$deobfMethod/$arity -> $obfMethod" }
-                    } else {
-                        mdbg { "  FAIL rename $className.$deobfMethod/$arity (no owner-scoped pick)" }
                     }
                 }
 
