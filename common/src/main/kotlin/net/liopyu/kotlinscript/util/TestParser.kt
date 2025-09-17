@@ -473,12 +473,10 @@ private fun argHints(
         if (e == null) return null
 
         val viaResolve = resolveExprType(e, env, imports)
-        println("[KS-arg-hints#A] typeOf expr='${e.text}' viaResolve=$viaResolve")
         if (viaResolve != null) return canonicalDeobfClass(viaResolve)
 
         return when (e) {
             is KtStringTemplateExpression -> {
-                println("[KS-arg-hints#A]   String literal -> java.lang.String")
                 "java.lang.String"
             }
 
@@ -491,31 +489,26 @@ private fun argHints(
                     "Z" -> "java.lang.Boolean"
                     else -> null
                 }
-                println("[KS-arg-hints#A]   const='${e.text}' -> $t")
                 t
             }
 
             is KtDotQualifiedExpression -> {
                 val t = typeOf(e.selectorExpression)
-                println("[KS-arg-hints#A]   dot='${e.text}' -> $t")
                 t
             }
 
             is KtCallExpression -> {
                 val ctor = resolveCtorType(e, imports)?.let(::canonicalDeobfClass)
-                println("[KS-arg-hints#A]   call='${e.text}' -> $ctor")
                 ctor
             }
 
             is KtNameReferenceExpression -> {
                 val rn = e.getReferencedName()
                 val t = canonicalDeobfClass(env[rn] ?: resolveTypeRef(rn, imports))
-                println("[KS-arg-hints#A]   name='$rn' -> $t")
                 t
             }
 
             else -> {
-                println("[KS-arg-hints#A]   expr='${e.text}' kind=${e::class.simpleName} -> <unknown>")
                 null
             }
         }
@@ -523,17 +516,13 @@ private fun argHints(
 
     val callee = (call.calleeExpression as? KtSimpleNameExpression)?.getReferencedName()
         ?: call.calleeExpression?.text
-    println("[KS-arg-hints#A] callee=$callee rawArgs=" +
-            call.valueArguments.joinToString { it.getArgumentExpression()?.text ?: "<null>" })
 
     val out = call.valueArguments.map { arg ->
         val e = arg.getArgumentExpression()
         val fq = typeOf(e)
         val hint = hintFromTypeFq(fq)
-        println("[KS-arg-hints#A]   expr='${e?.text}' type=$fq -> hint=$hint")
         hint
     }
-    println("[KS-arg-hints#A] -> $out")
     return out
 }
 
@@ -560,7 +549,6 @@ private fun argHints(
         if (e == null) return null
         return when (e) {
             is KtStringTemplateExpression -> {
-                println("[KS-arg-hints#B]   String literal -> java.lang.String")
                 "java.lang.String"
             }
 
@@ -573,34 +561,29 @@ private fun argHints(
                     "Z" -> "java.lang.Boolean"
                     else -> null
                 }
-                println("[KS-arg-hints#B]   const='${e.text}' -> $t")
                 t
             }
 
             is KtNameReferenceExpression -> {
                 val rn = e.getReferencedName()
                 val t = canonicalDeobfClass(env[rn] ?: resolveTypeRef(rn, imports))
-                println("[KS-arg-hints#B]   name='$rn' -> $t")
                 t
             }
 
             is KtCallExpression -> {
                 val ctor = resolveCtorType(e, imports)?.let(::canonicalDeobfClass)
-                println("[KS-arg-hints#B]   call='${e.text}' -> $ctor")
                 ctor
             }
 
             is KtDotQualifiedExpression -> {
                 val ownerT = resolveExprTypeForHint(e.receiverExpression)
                 val sel = e.selectorExpression
-                println("[KS-arg-hints#B]   dot recv='${e.receiverExpression.text}' ownerT=$ownerT sel='${sel?.text}'")
                 if (ownerT == null || sel == null) return null
 
                 when (sel) {
                     is KtCallExpression -> {
                         val m = (sel.calleeExpression as? KtSimpleNameExpression)?.getReferencedName()
                         val childHints = argHints(sel, imports, env)
-                        println("[KS-arg-hints#B]     invoke name=$m childHints=$childHints")
                         if (m != null) {
                             val strong = strongPickOnOwner(ownerT, m, childHints.size, childHints)
                             val mapPick = mappingPickOnOwner(ownerT, m, childHints.size, childHints)
@@ -608,7 +591,6 @@ private fun argHints(
                             val reflectRet = reflectMethodReturnType(ownerT, m, childHints.size, childHints)
                             val ret = strong.retDeobf ?: mapPick?.retDeobf ?: selPick?.retDeobf ?: reflectRet
                             val out = preferOwnerInner(ownerT, ret)?.let(::canonicalDeobfClass)
-                            println("[KS-arg-hints#B]     -> ret=$out")
                             out
                         } else null
                     }
@@ -617,7 +599,6 @@ private fun argHints(
                         val field = sel.getReferencedName()
                         val next = nextTypeAfterField(ownerT, field) ?: reflectDeobfFieldType(ownerT, field)
                         val out = next?.let(::canonicalDeobfClass)
-                        println("[KS-arg-hints#B]     field '$field' -> $out")
                         out
                     }
 
@@ -631,12 +612,10 @@ private fun argHints(
                     ?: e.operationReference.text
                 val lt = e.left?.text
                 val rt = e.right?.text
-                println("[KS-arg-hints#B]   binary expr='${e.text}' op=$opName left='$lt' right='$rt' -> <no-type-for-hint>")
                 null
             }
 
             else -> {
-                println("[KS-arg-hints#B]   expr='${e.text}' kind=${e::class.simpleName} -> <unknown>")
                 null
             }
         }
@@ -644,17 +623,13 @@ private fun argHints(
 
     val callee = (call.calleeExpression as? KtSimpleNameExpression)?.getReferencedName()
         ?: call.calleeExpression?.text
-    println("[KS-arg-hints#B] callee=$callee rawArgs=" +
-            call.valueArguments.joinToString { it.getArgumentExpression()?.text ?: "<null>" })
 
     val out = call.valueArguments.map { arg ->
         val e = arg.getArgumentExpression()
         val t = resolveExprTypeForHint(e)
         val h = hintFromType(t)
-        println("[KS-arg-hints#B]   expr='${e?.text}' type=$t -> hint=$h")
         h
     }
-    println("[KS-arg-hints#B] -> $out")
     return out
 }
 
@@ -2597,7 +2572,6 @@ fun findMethodUsages(ktFile: KtFile): Set<MethodUse> {
                 ?: expr.operationReference.text
             val lt = expr.left?.let { resolveExprType(it, env, imports) }
             val rt = expr.right?.let { resolveExprType(it, env, imports) }
-            println("[KS-type-bin] '${expr.text}' op=$op left=$lt right=$rt -> <no change>")
             null
         }
 
