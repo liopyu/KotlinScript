@@ -322,22 +322,12 @@ private fun deobfMethodReturnType(
 ): String? {
     val ownerDeobf = normalizeOwnerForLookup(ownerDeobfInput)
     val list = deobfMethodOverloads[ownerDeobf]?.get(methodName) ?: run {
-        println("[KS-ret] deobfMethodReturnType: no overloads for owner='$ownerDeobf' meth='$methodName'")
         return null
     }
 
     var bestScore = -1
     var bestRetJvm: String? = null
 
-    println(
-        "[KS-ret] deobf pick owner='$ownerDeobf' meth='$methodName' arity=$arity hints(raw)=$hints hints(jvm)=${
-            hints.map {
-                toJvmHint(
-                    it
-                )
-            }
-        }"
-    )
 
     for ((desc, _) in list) {
         val ps = paramTypes(desc)
@@ -354,7 +344,6 @@ private fun deobfMethodReturnType(
                 else if (pBare.contains(hBare)) score += 3
             }
         }
-        println("[KS-ret]   cand desc='$desc' ps=$ps score=$score")
 
         if (score > bestScore) {
             bestScore = score
@@ -364,7 +353,6 @@ private fun deobfMethodReturnType(
 
     val mapped = bestRetJvm?.let(::canonicalDeobfClass)
     val preferred = preferOwnerInner(ownerDeobf, mapped)
-    println("[KS-ret] -> bestScore=$bestScore retJvm='$bestRetJvm' mapped='$mapped' preferred='$preferred'")
     return preferred
 }
 
@@ -376,26 +364,15 @@ private fun obfMethodReturnType(
 ): String? {
     val ownerDeobf = normalizeOwnerForLookup(ownerDeobfInput)
     val obfOwner = deobfToObfClassMap[ownerDeobf] ?: run {
-        println("[KS-ret] obfMethodReturnType: no obf owner for '$ownerDeobf'")
         return null
     }
     val table = obfToDeobfMethodMap[obfOwner] ?: run {
-        println("[KS-ret] obfMethodReturnType: no table for obfOwner='$obfOwner'")
         return null
     }
 
     var bestScore = -1
     var bestRetDeobf: String? = null
 
-    println(
-        "[KS-ret] obf pick owner='$ownerDeobf'($obfOwner) meth='$obfMethod' arity=$arity hints(raw)=$hints hints(jvm)=${
-            hints.map {
-                toJvmHint(
-                    it
-                )
-            }
-        }"
-    )
 
     for ((key, _) in table) {
         if (!key.startsWith("$obfMethod(")) continue
@@ -414,8 +391,6 @@ private fun obfMethodReturnType(
                 else if (pBare.contains(hBare)) score += 3
             }
         }
-        println("[KS-ret]   cand key='$key' desc='$desc' ps=$ps score=$score")
-
         if (score >= bestScore) {
             bestScore = score
             val retObf = jvmMethodReturnToClassName(desc)
@@ -433,7 +408,6 @@ private fun obfMethodReturnType(
     }
 
     val preferred = preferOwnerInner(ownerDeobf, bestRetDeobf)
-    println("[KS-ret] -> bestScore=$bestScore retDeobf='$bestRetDeobf' preferred='$preferred'")
     return preferred
 }
 
@@ -458,12 +432,10 @@ fun hintForArgExpr(expr: KtExpression?, env: TypeEnv, imports: Map<String, Strin
     val resolved = resolveExprType(expr, env, imports)
     if (resolved != null) {
         val h = hintFromTypeFq(resolved)
-        println("[KS-type] arg='${expr.text}' kind=resolved type=$resolved hint=$h")
         return h
     }
     when (expr) {
         is KtStringTemplateExpression -> {
-            println("[KS-type] arg='${expr.text}' kind=StringLiteral hint=java/lang/String")
             return "java/lang/String"
         }
 
@@ -475,11 +447,9 @@ fun hintForArgExpr(expr: KtExpression?, env: TypeEnv, imports: Map<String, Strin
                 s.contains('.') -> "D"
                 else -> "I"
             }
-            println("[KS-type] arg='${expr.text}' kind=NumberLiteral hint=$k")
             return k
         }
     }
-    println("[KS-type] arg='${expr.text}' kind=unknown hint=")
     return ""
 }
 
@@ -488,7 +458,6 @@ private fun argHints(
     imports: Map<String, String>,
     env: TypeEnv
 ): List<String> {
-
 
     fun numericHint(textRaw: String): String {
         val s = textRaw.trim().lowercase()
@@ -503,34 +472,69 @@ private fun argHints(
     fun typeOf(e: KtExpression?): String? {
         if (e == null) return null
 
-        resolveExprType(e, env, imports)?.let { return canonicalDeobfClass(it) }
+        val viaResolve = resolveExprType(e, env, imports)
+        println("[KS-arg-hints#A] typeOf expr='${e.text}' viaResolve=$viaResolve")
+        if (viaResolve != null) return canonicalDeobfClass(viaResolve)
 
         return when (e) {
-            is KtStringTemplateExpression -> "java.lang.String"
-            is KtConstantExpression -> when (numericHint(e.text)) {
-                "F" -> "java.lang.Float"
-                "D" -> "java.lang.Double"
-                "I" -> "java.lang.Integer"
-                "Z" -> "java.lang.Boolean"
-                else -> null
+            is KtStringTemplateExpression -> {
+                println("[KS-arg-hints#A]   String literal -> java.lang.String")
+                "java.lang.String"
             }
 
-            is KtDotQualifiedExpression -> typeOf(e.selectorExpression)
+            is KtConstantExpression -> {
+                val atom = numericHint(e.text)
+                val t = when (atom) {
+                    "F" -> "java.lang.Float"
+                    "D" -> "java.lang.Double"
+                    "I" -> "java.lang.Integer"
+                    "Z" -> "java.lang.Boolean"
+                    else -> null
+                }
+                println("[KS-arg-hints#A]   const='${e.text}' -> $t")
+                t
+            }
 
-            is KtCallExpression -> resolveCtorType(e, imports)?.let(::canonicalDeobfClass)
+            is KtDotQualifiedExpression -> {
+                val t = typeOf(e.selectorExpression)
+                println("[KS-arg-hints#A]   dot='${e.text}' -> $t")
+                t
+            }
+
+            is KtCallExpression -> {
+                val ctor = resolveCtorType(e, imports)?.let(::canonicalDeobfClass)
+                println("[KS-arg-hints#A]   call='${e.text}' -> $ctor")
+                ctor
+            }
 
             is KtNameReferenceExpression -> {
                 val rn = e.getReferencedName()
-                canonicalDeobfClass(env[rn] ?: resolveTypeRef(rn, imports))
+                val t = canonicalDeobfClass(env[rn] ?: resolveTypeRef(rn, imports))
+                println("[KS-arg-hints#A]   name='$rn' -> $t")
+                t
             }
 
-            else -> null
+            else -> {
+                println("[KS-arg-hints#A]   expr='${e.text}' kind=${e::class.simpleName} -> <unknown>")
+                null
+            }
         }
     }
 
-    return call.valueArguments.map { arg ->
-        hintFromTypeFq(typeOf(arg.getArgumentExpression()))
+    val callee = (call.calleeExpression as? KtSimpleNameExpression)?.getReferencedName()
+        ?: call.calleeExpression?.text
+    println("[KS-arg-hints#A] callee=$callee rawArgs=" +
+            call.valueArguments.joinToString { it.getArgumentExpression()?.text ?: "<null>" })
+
+    val out = call.valueArguments.map { arg ->
+        val e = arg.getArgumentExpression()
+        val fq = typeOf(e)
+        val hint = hintFromTypeFq(fq)
+        println("[KS-arg-hints#A]   expr='${e?.text}' type=$fq -> hint=$hint")
+        hint
     }
+    println("[KS-arg-hints#A] -> $out")
+    return out
 }
 
 private fun argHints(
@@ -540,7 +544,7 @@ private fun argHints(
 ): List<String> {
 
     fun hintFromType(deobfFq: String?): String =
-        if (deobfFq.isNullOrBlank()) "" else toJvmHint(deobfFq.substringAfterLast('.'))
+        if (deobfFq.isNullOrBlank()) "" else toJvmHint(deobfFq)
 
     fun numericHint(textRaw: String): String {
         val s = textRaw.trim().lowercase()
@@ -555,72 +559,105 @@ private fun argHints(
     fun resolveExprTypeForHint(e: KtExpression?): String? {
         if (e == null) return null
         return when (e) {
-            is KtStringTemplateExpression -> "java.lang.String"
-            is KtConstantExpression -> return when (numericHint(e.text)) {
-                "F" -> "java.lang.Float"
-                "D" -> "java.lang.Double"
-                "I" -> "java.lang.Integer"
-                "Z" -> "java.lang.Boolean"
-                else -> null
+            is KtStringTemplateExpression -> {
+                println("[KS-arg-hints#B]   String literal -> java.lang.String")
+                "java.lang.String"
+            }
+
+            is KtConstantExpression -> {
+                val atom = numericHint(e.text)
+                val t = when (atom) {
+                    "F" -> "java.lang.Float"
+                    "D" -> "java.lang.Double"
+                    "I" -> "java.lang.Integer"
+                    "Z" -> "java.lang.Boolean"
+                    else -> null
+                }
+                println("[KS-arg-hints#B]   const='${e.text}' -> $t")
+                t
             }
 
             is KtNameReferenceExpression -> {
                 val rn = e.getReferencedName()
-                canonicalDeobfClass(env[rn] ?: resolveTypeRef(rn, imports))
+                val t = canonicalDeobfClass(env[rn] ?: resolveTypeRef(rn, imports))
+                println("[KS-arg-hints#B]   name='$rn' -> $t")
+                t
             }
 
-            is KtCallExpression -> resolveCtorType(e, imports)?.let(::canonicalDeobfClass)
+            is KtCallExpression -> {
+                val ctor = resolveCtorType(e, imports)?.let(::canonicalDeobfClass)
+                println("[KS-arg-hints#B]   call='${e.text}' -> $ctor")
+                ctor
+            }
 
             is KtDotQualifiedExpression -> {
                 val ownerT = resolveExprTypeForHint(e.receiverExpression)
                 val sel = e.selectorExpression
+                println("[KS-arg-hints#B]   dot recv='${e.receiverExpression.text}' ownerT=$ownerT sel='${sel?.text}'")
                 if (ownerT == null || sel == null) return null
 
                 when (sel) {
                     is KtCallExpression -> {
                         val m = (sel.calleeExpression as? KtSimpleNameExpression)?.getReferencedName()
                         val childHints = argHints(sel, imports, env)
+                        println("[KS-arg-hints#B]     invoke name=$m childHints=$childHints")
                         if (m != null) {
                             val strong = strongPickOnOwner(ownerT, m, childHints.size, childHints)
                             val mapPick = mappingPickOnOwner(ownerT, m, childHints.size, childHints)
                             val selPick = reflectSelectMethod(ownerT, m, childHints.size, childHints)
                             val reflectRet = reflectMethodReturnType(ownerT, m, childHints.size, childHints)
-
-                            println(
-                                "[KS-type]   HINT call '$m' owner=$ownerT arity=${childHints.size} childHints=$childHints " +
-                                        "-> strong.obf=${strong.obfName} strong.ret=${strong.retDeobf} " +
-                                        "map.ret=${mapPick?.retDeobf} sel.obf=${selPick?.obfName} sel.ret=${selPick?.retDeobf} " +
-                                        "reflect.ret=$reflectRet"
-                            )
-
-                            val ret = strong.retDeobf
-                                ?: mapPick?.retDeobf
-                                ?: selPick?.retDeobf
-                                ?: reflectRet
-
-                            preferOwnerInner(ownerT, ret)?.let(::canonicalDeobfClass)
+                            val ret = strong.retDeobf ?: mapPick?.retDeobf ?: selPick?.retDeobf ?: reflectRet
+                            val out = preferOwnerInner(ownerT, ret)?.let(::canonicalDeobfClass)
+                            println("[KS-arg-hints#B]     -> ret=$out")
+                            out
                         } else null
                     }
 
                     is KtSimpleNameExpression -> {
                         val field = sel.getReferencedName()
-                        val next = nextTypeAfterField(ownerT, field)
-                            ?: reflectDeobfFieldType(ownerT, field)
-                        next?.let(::canonicalDeobfClass)
+                        val next = nextTypeAfterField(ownerT, field) ?: reflectDeobfFieldType(ownerT, field)
+                        val out = next?.let(::canonicalDeobfClass)
+                        println("[KS-arg-hints#B]     field '$field' -> $out")
+                        out
                     }
 
                     else -> null
                 }
             }
 
-            else -> null
+
+            is KtBinaryExpression -> {
+                val opName = (e.operationReference as? KtSimpleNameExpression)?.getReferencedName()
+                    ?: e.operationReference.text
+                val lt = e.left?.text
+                val rt = e.right?.text
+                println("[KS-arg-hints#B]   binary expr='${e.text}' op=$opName left='$lt' right='$rt' -> <no-type-for-hint>")
+                null
+            }
+
+            else -> {
+                println("[KS-arg-hints#B]   expr='${e.text}' kind=${e::class.simpleName} -> <unknown>")
+                null
+            }
         }
     }
 
-    return call.valueArguments.map { arg ->
-        hintFromType(resolveExprTypeForHint(arg.getArgumentExpression()))
+    val callee = (call.calleeExpression as? KtSimpleNameExpression)?.getReferencedName()
+        ?: call.calleeExpression?.text
+    println("[KS-arg-hints#B] callee=$callee rawArgs=" +
+            call.valueArguments.joinToString { it.getArgumentExpression()?.text ?: "<null>" })
+
+    val out = call.valueArguments.map { arg ->
+        val e = arg.getArgumentExpression()
+        val t = resolveExprTypeForHint(e)
+        val h = hintFromType(t)
+        println("[KS-arg-hints#B]   expr='${e?.text}' type=$t -> hint=$h")
+        h
     }
+    println("[KS-arg-hints#B] -> $out")
+    return out
 }
+
 
 fun findChainedFieldRewrites(ktFile: KtFile, source: String): Map<Int, List<Pair<String, String>>> {
     val starts = lineStartsOf(source)
@@ -1251,7 +1288,6 @@ private val simpleNameIndex: Map<String, List<String>> by lazy {
 private fun guessFqFromSimple(simple: String, debug: Boolean = true): String? {
     val hits = simpleNameIndex[simple] ?: return null
     if (hits.size == 1) return hits.first()
-    if (debug) println("[KS-own] ambiguous simple '$simple' -> candidates=$hits")
     return null
 }
 
@@ -1263,20 +1299,15 @@ private fun normalizeOwnerForLookup(
     if ('.' !in o) {
         val byImport = imports?.get(o)
         if (byImport != null) {
-            println("[KS-own] import maps '$o' -> '$byImport'")
             o = byImport
         } else {
             val guess = guessFqFromSimple(o)
             if (guess != null) {
-                println("[KS-own] guess simple '$o' -> '$guess'")
                 o = guess
-            } else {
-                println("[KS-own] keep simple '$o' (ambiguous/no import)")
             }
         }
     }
     val canon = canonicalDeobfClass(o)
-    if (canon != o) println("[KS-own] canonical '$o' -> '$canon'")
     return canon
 }
 
@@ -1301,7 +1332,6 @@ private fun normalizeOwnerForLookup(
     }
 
     imports?.get(ownerDeobf)?.let { imp ->
-        println("[KS-own] import maps '$ownerDeobf' -> '$imp'")
         return canonicalDeobfClassPreserveInner(imp)
     }
 
@@ -1312,7 +1342,6 @@ private fun normalizeOwnerForLookup(
             val withMethod = filtered.filter { deobfMethodOverloads[it]?.containsKey(contextMethod) == true }
             if (withMethod.size == 1) {
                 val hit = withMethod.first()
-                println("[KS-own] method '$contextMethod' disambiguates '$ownerDeobf' -> '$hit'")
                 return canonicalDeobfClassPreserveInner(hit)
             }
             if (withMethod.isNotEmpty()) filtered = withMethod
@@ -1320,10 +1349,8 @@ private fun normalizeOwnerForLookup(
         val withPkg = filtered.filter { '.' in it }
         if (withPkg.size == 1) {
             val hit = withPkg.first()
-            println("[KS-own] pkg tie-break '$ownerDeobf' -> '$hit'")
             return canonicalDeobfClassPreserveInner(hit)
         }
-        println("[KS-own] ambiguous simple '$ownerDeobf' -> candidates=$filtered (keeping simple)")
     }
 
     return ownerDeobf
@@ -1889,7 +1916,7 @@ fun resolveExprType(
     }
 
     fun hintFromType(deobfFq: String?): String =
-        if (deobfFq == null) "" else toJvmHint(deobfFq.substringAfterLast('.'))
+        if (deobfFq.isNullOrBlank()) "" else toJvmHint(deobfFq)
 
 
     fun hintForArg(a: KtExpression?): String {
@@ -1897,7 +1924,6 @@ fun resolveExprType(
         val resolved = resolveExprType(a, env, imports)
         if (resolved != null) {
             val h = hintFromType(resolved)
-            println("[KS-type] arg='${a.text}' kind=resolved type=$resolved hint=$h")
             return h
         }
         when (a) {
@@ -1905,23 +1931,19 @@ fun resolveExprType(
                 val opName = (a.operationReference as? KtSimpleNameExpression)
                     ?.getReferencedName() ?: a.operationReference.text
                 if (opName in setOf("shl", "shr", "ushr", "and", "or", "xor")) {
-                    println("[KS-type] arg='${a.text}' kind=bitwise op=$opName hint=I")
                     return "I"
                 }
             }
 
             is KtStringTemplateExpression -> {
-                println("[KS-type] arg='${a.text}' kind=StringLiteral hint=java/lang/String")
                 return "java/lang/String"
             }
 
             is KtConstantExpression -> {
                 val k = numericClassOfLiteral(a.text)
-                println("[KS-type] arg='${a.text}' kind=NumberLiteral hint=$k")
                 return k
             }
         }
-        println("[KS-type] arg='${a.text}' kind=unknown hint=")
         return ""
     }
 
@@ -1931,7 +1953,6 @@ fun resolveExprType(
                 ?.getReferencedName() ?: expr.operationReference.text
 
             if (opName in setOf("shl", "shr", "ushr", "and", "or", "xor")) {
-                println("[KS-type] bitwise '${expr.text}' op=$opName -> kotlin.Int")
                 "kotlin.Int"
             } else {
                 val lt = resolveExprType(expr.left ?: return null, env, imports)
@@ -1941,39 +1962,33 @@ fun resolveExprType(
                     lt == "kotlin.Float" || rt == "kotlin.Float" -> "kotlin.Float"
                     else -> "kotlin.Int"
                 }
-                println("[KS-type] binary '${expr.text}' op=$opName -> $t")
                 t
             }
         }
 
         is KtThisExpression -> {
             val t = env["this"]?.let(::canonical)
-            println("[KS-type] this -> $t")
             t
         }
 
         is KtStringTemplateExpression -> {
-            println("[KS-type] String literal '${expr.text}' -> java.lang.String")
             "java.lang.String"
         }
 
         is KtConstantExpression -> {
             val k = numericClassOfLiteral(expr.text)
-            println("[KS-type] number literal '${expr.text}' -> <primitive $k> (returning null type, using hint)")
             null
         }
 
         is KtNameReferenceExpression -> {
             val rn = expr.getReferencedName()
             val t = (env[rn] ?: resolveTypeRef(rn, imports))?.let(::canonical)
-            println("[KS-type] name '$rn' -> $t")
             t
         }
 
         is KtDotQualifiedExpression -> {
             val owner0 = resolveExprType(expr.receiverExpression, env, imports)
             val sel = expr.selectorExpression
-            println("[KS-type] dot recv='${expr.receiverExpression.text}' owner=$owner0 sel='${sel?.text}'")
 
             val ctxName: String? = when (sel) {
                 is KtCallExpression -> (sel.calleeExpression as? KtSimpleNameExpression)?.getReferencedName()
@@ -1990,7 +2005,6 @@ fun resolveExprType(
                     val viaMap = owner?.let { deobfFieldTypeMap[it]?.get(field) }
                     val ret = (viaNext ?: viaMap)
                     val retFq = ret?.let { normalizeOwnerForLookup(it, imports, null) }
-                    println("[KS-type]   field '$field' -> viaNext=$viaNext viaMap=$viaMap ret=$retFq")
                     retFq
                 }
 
@@ -2033,16 +2047,9 @@ fun resolveExprType(
                         val retPreferred = preferOwnerInner(owner, retRaw)
                         val retFq = retPreferred?.let { normalizeOwnerForLookup(it, imports, null) }
 
-                        println(
-                            "[KS-type]   call '$m' owner=$owner arity=${hints.size} hints=$hints " +
-                                    "-> strong.obf=${pickStrong.obfName} strong.ret=${pickStrong.retDeobf} " +
-                                    "map.ret=${mapPick?.retDeobf} sel.obf=${selPick?.obfName} sel.ret=${selPick?.retDeobf} " +
-                                    "reflect.ret=$reflectRet => retRaw=$retRaw retPreferred=$retPreferred retFq=$retFq"
-                        )
 
                         retFq
                     } else {
-                        println("[KS-type]   call '$m' unresolved owner or name (owner=$owner)")
                         null
                     }
                 }
@@ -2056,18 +2063,15 @@ fun resolveExprType(
             val rebuilt = KtPsiFactory(expr.project)
                 .createExpression("${expr.receiverExpression.text}.${expr.selectorExpression?.text}") as KtExpression
             val t = resolveExprType(rebuilt, env, imports)?.let(::canonical)
-            println("[KS-type] safe-dot '${expr.text}' -> $t")
             t
         }
 
         is KtCallExpression -> {
             val ctor = resolveCtorType(expr, imports)?.let(::canonical)
-            println("[KS-type] ctor/static '${expr.text}' -> $ctor")
             ctor
         }
 
         else -> {
-            println("[KS-type] expr '${expr.text}' kind=${expr::class.simpleName} -> <unknown>")
             null
         }
     }
@@ -2146,13 +2150,8 @@ private fun argExprToRuntimeClass(arg: KtExpression?, env: TypeEnv, imports: Map
         val fq = obf.replace('/', '.')
         return runCatching {
             val k = Class.forName(fq, false, Thread.currentThread().contextClassLoader)
-            println("[KS-argK] expr='${arg.text}' deobf='$deobf' obf='$obf' fq='$fq' -> $k")
             k
-        }.onFailure {
-            println("[KS-argK] expr='${arg.text}' deobf='$deobf' obf='$obf' fq='$fq' -> <FAILED> $it")
         }.getOrNull()
-    } else {
-        println("[KS-argK] expr='${arg.text}' deobf=<null>")
     }
 
     if (arg is KtDotQualifiedExpression) {
@@ -2171,7 +2170,6 @@ private fun argExprToRuntimeClass(arg: KtExpression?, env: TypeEnv, imports: Map
                 val fq = obf.replace('/', '.')
                 return runCatching {
                     val k = Class.forName(fq, false, Thread.currentThread().contextClassLoader)
-                    println("[KS-argK] (fallback) expr='${arg.text}' owner='$ownerT' m='$m' ret='$ret' fq='$fq' -> $k")
                     k
                 }.getOrNull()
             }
@@ -2197,7 +2195,6 @@ private fun reflectionPickOverload(
     }
 
     val argKs: List<Class<*>?> = argExprs.map { argExprToRuntimeClass(it, env, imports) }
-    println("[KS-reflect] owner='$ownerDeobf' ($ownerObf) method='$methodName' argK=$argKs")
 
     fun compatible(paramPieces: List<String>): Pair<Boolean, Array<Class<*>>?> {
         if (paramPieces.size != argKs.size) return false to null
@@ -2234,11 +2231,9 @@ private fun reflectionPickOverload(
     for ((desc, obfName) in ordered) {
         val ps = paramTypes(desc)
         val (ok, pcs) = compatible(ps)
-        println("[KS-reflect]   cand name=$obfName desc=$desc ps=$ps compat=$ok")
         if (!ok || pcs == null) continue
         try {
             ownerK.getMethod(obfName, *pcs)
-            println("[KS-reflect]   -> choose '$obfName' by reflection")
             return obfName
         } catch (_: Throwable) {
         }
@@ -2270,8 +2265,7 @@ fun collectMethodCallRewritesByLine(ktFile: KtFile, source: String): Map<Int, Li
         t?.let { resolveTypeRef(it, importSimpleNameMap) }?.let(::canonicalDeobfClass)
 
     fun hintFromType(deobfFq: String?): String =
-        if (deobfFq == null) "" else toJvmHint(deobfFq.substringAfterLast('.'))
-
+        if (deobfFq.isNullOrBlank()) "" else toJvmHint(deobfFq)
 
     fun numericHintFromLiteral(text: String): String {
         val s = text.lowercase()
@@ -2344,7 +2338,6 @@ fun collectMethodCallRewritesByLine(ktFile: KtFile, source: String): Map<Int, Li
                         val fq = normalizeOwnerForLookup(fq0, importSimpleNameMap, null)
                         p.name?.let { name ->
                             env[name] = fq
-                            println("[KS-env] param '$name': typeText='$t' -> '$fq'")
                         }
                     }
                 }
@@ -2585,7 +2578,7 @@ fun findMethodUsages(ktFile: KtFile): Set<MethodUse> {
 
 
     fun hintFromType(deobfFq: String?): String =
-        if (deobfFq == null) "" else canonicalDeobfClass(deobfFq).replace('.', '/')
+        if (deobfFq.isNullOrBlank()) "" else toJvmHint(deobfFq)
 
     fun resolveExprType(
         expr: KtExpression,
@@ -2599,9 +2592,19 @@ fun findMethodUsages(ktFile: KtFile): Set<MethodUse> {
             env[rn] ?: resolveTypeRef(rn, imports)
         }
 
+        is KtBinaryExpression -> {
+            val op = (expr.operationReference as? KtSimpleNameExpression)?.getReferencedName()
+                ?: expr.operationReference.text
+            val lt = expr.left?.let { resolveExprType(it, env, imports) }
+            val rt = expr.right?.let { resolveExprType(it, env, imports) }
+            println("[KS-type-bin] '${expr.text}' op=$op left=$lt right=$rt -> <no change>")
+            null
+        }
+
         is KtDotQualifiedExpression -> {
             val ownerType = resolveExprType(expr.receiverExpression, env, imports)
             when (val sel = expr.selectorExpression) {
+
                 is KtSimpleNameExpression -> {
                     val field = sel.getReferencedName()
                     if (ownerType != null) nextTypeAfterField(ownerType, field) else null
@@ -2619,18 +2622,12 @@ fun findMethodUsages(ktFile: KtFile): Set<MethodUse> {
                         val selPick = reflectSelectMethod(ownerType, method, hints.size, hints)
                         val reflectRet = reflectMethodReturnType(ownerType, method, hints.size, hints)
 
-                        println(
-                            "[KS-type]   HINT call '$method' owner=$ownerType arity=${hints.size} childHints=$hints " +
-                                    "-> strong.obf=${strong.obfName} strong.ret=${strong.retDeobf} " +
-                                    "map.ret=${mapPick?.retDeobf} sel.obf=${selPick?.obfName} sel.ret=${selPick?.retDeobf} " +
-                                    "reflect.ret=$reflectRet"
-                        )
+
                         val retRaw = strong.retDeobf
                             ?: mapPick?.retDeobf
                             ?: selPick?.retDeobf
                             ?: reflectRet
                         val retPreferred = preferOwnerInner(ownerType, retRaw)
-                        println("[KS-type]   call '$method' owner=$ownerType arity=${hints.size} hints=$hints -> strong.ret=${strong.retDeobf} map.ret=${mapPick?.retDeobf} sel.ret=${selPick?.retDeobf} reflect.ret=$reflectRet => retPreferred=$retPreferred")
 
                         retPreferred?.let(::canonicalDeobfClass)
 
@@ -2854,7 +2851,6 @@ private fun preferOwnerInner(ownerDeobf: String?, retDeobf: String?): String? {
         deobfToObfClassMap.containsKey(dollar) -> dollar
         else -> null
     }
-    println("[KS-inner] owner='$ownerDeobf'→'$ownerFq' retIn='$retDeobf'→'$retFqOrSimple' simple='$simple' try='$dot'|'$dollar' hit='${hit ?: "-"}'")
     return (hit ?: retFqOrSimple)
 }
 
@@ -3128,6 +3124,15 @@ private fun bareJvm(s: String): String =
 private fun toJvmHint(s: String): String {
     val t = s.removeSuffix("?")
     return when (t) {
+        "Int" -> "I"
+        "Integer" -> "I"
+        "Float" -> "F"
+        "Double" -> "D"
+        "Boolean" -> "Z"
+        "Long" -> "J"
+        "Short" -> "S"
+        "Byte" -> "B"
+        "Char" -> "C"
         "boolean", "kotlin.Boolean", "java.lang.Boolean" -> "Z"
         "byte", "kotlin.Byte", "java.lang.Byte" -> "B"
         "char", "kotlin.Char", "java.lang.Character" -> "C"
@@ -3164,10 +3169,8 @@ private fun reflectMethodReturnType(
     arity: Int,
     hints: List<String>
 ): String? {
-    println("[KS-reflect-ret] owner=$ownerDeobf method=$methodNameOrObf arity=$arity hints=$hints")
 
     val root = tryLoadEither(ownerDeobf) ?: run {
-        println("[KS-reflect-ret]   !! could not load owner class for '$ownerDeobf'")
         return null
     }
 
@@ -3198,22 +3201,16 @@ private fun reflectMethodReturnType(
                 val k = keyOf(m)
                 val deobf = back?.get(k)
                 accept = (deobf == methodNameOrObf)
-                if (!accept) reasons += "reject ${m.declaringClass.name}.${m.name}${keyOf(m)}: name/backmap mismatch (wanted '$methodNameOrObf', got '$deobf')"
             }
             if (accept) strict += m
         }
     }
-    println("[KS-reflect-ret]   strictCandidates=${strict.size}")
-    reasons.take(5).forEach { println("[KS-reflect-ret]     $it") }
 
     val candidates = if (strict.isNotEmpty()) strict else buildList {
         for (c in seen) for (m in c.declaredMethods + c.methods) {
             if (m.parameterCount == arity) add(m)
         }
     }
-    println("[KS-reflect-ret]   candidates=${candidates.size} -> ${
-        candidates.joinToString { it.name + keyOf(it) }
-    }")
 
     if (candidates.isEmpty()) return null
 
@@ -3243,7 +3240,6 @@ private fun reflectMethodReturnType(
     if (ret == java.lang.Void.TYPE) return null
 
     val obfRet = ret.name
-    println("[KS-reflect-ret]   choose name=${chosen.name} ret=$obfRet tie=$tie")
 
     val deobfRaw =
         obfToDeobfClassMap[obfRet]
@@ -3252,7 +3248,6 @@ private fun reflectMethodReturnType(
 
     val named = canonicalDeobfClass(deobfRaw)
     val preferred = preferOwnerInner(ownerDeobf, named)
-    println("[KS-reflect-ret]   deobfRet=$named -> preferred=$preferred (from obf=$obfRet)")
     return preferred
 }
 
@@ -3357,10 +3352,8 @@ private fun reflectSelectMethod(
     arity: Int,
     hints: List<String>
 ): ReflectPick? {
-    println("[KS-reflect-sel] owner=$ownerDeobf method=$methodNameOrObf arity=$arity hints=$hints")
 
     val root = tryLoadEither(ownerDeobf) ?: run {
-        println("[KS-reflect-sel]   !! could not load owner class for '$ownerDeobf'")
         return null
     }
     val seen = LinkedHashSet<Class<*>>()
@@ -3392,7 +3385,6 @@ private fun reflectSelectMethod(
             if (m.parameterCount == arity) add(m)
         }
     }
-    println("[KS-reflect-sel]   candidates=${candidates.size}")
 
     if (candidates.isEmpty()) return null
 
@@ -3410,7 +3402,6 @@ private fun reflectSelectMethod(
         obfToDeobfClassMap[retObf] ?: obfToDeobfClassMap[retObf.replace('$', '.')] ?: retObf
     val retPreferred = preferOwnerInner(ownerDeobf, canonicalDeobfClass(retDeobf))
     val obfName = chosen.name
-    println("[KS-reflect-sel]   choose obf=$obfName ret=$retPreferred")
     return ReflectPick(obfName, retPreferred)
 }
 
