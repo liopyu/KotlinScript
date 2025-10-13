@@ -14,14 +14,9 @@ abstract class PluginScript
 
 object ScriptConfiguration : ScriptCompilationConfiguration({
     ide.acceptedLocations(ScriptAcceptedLocation.Everywhere)
-    compilerOptions("-jvm-target", "17")
+    compilerOptions("-jvm-target", "21")
     defaultImports(KS.defaultImports)
     jvm {
-        dependenciesFromClassloader(
-            classLoader = sharedClassLoader,
-            wholeClasspath = true
-        )
-
+        dependenciesFromClassloader(classLoader = compilerCl, wholeClasspath = true)
     }
 })
-

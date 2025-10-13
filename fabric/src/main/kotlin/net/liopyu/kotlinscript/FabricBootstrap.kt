@@ -7,7 +7,9 @@ import io.github.classgraph.ClassGraph
 import io.github.classgraph.FieldInfo
 import kotlinx.coroutines.*
 import net.fabricmc.api.ModInitializer
+import net.fabricmc.loader.api.FabricLoader
 import net.fabricmc.loader.impl.launch.FabricLauncherBase
+import net.fabricmc.loader.impl.lib.mappingio.tree.MappingTree
 import net.liopyu.kotlinscript.util.*
 import org.jetbrains.java.decompiler.main.decompiler.ConsoleDecompiler
 import org.jetbrains.kotlin.cli.common.CLIConfigurationKeys
@@ -257,6 +259,162 @@ class FabricBootstrap : ModInitializer {
 
     }
 
+    fun isDevEnvironment(): Boolean {
+        return FabricLoader.getInstance().isDevelopmentEnvironment
+    }
+
+    fun buildDeobfToObfMapFromTree(tree: MappingTree, obfNamespace: Int, deobfNamespace: Int) {
+        val namespaces = listOf(tree.srcNamespace) + tree.dstNamespaces
+        var classCount = 0
+        var skippedClassCount = 0
+
+        for (classDef in tree.classes) {
+            val names = mutableListOf<String?>()
+            for (i in namespaces.indices) {
+                val name = try {
+                    classDef.getName(i)
+                } catch (_: Exception) {
+                    null
+                }
+                names.add(name)
+            }
+
+            val obfClass = if (obfNamespace < names.size) names[obfNamespace]?.replace('/', '.') else null
+            val deobfClass = if (deobfNamespace < names.size) names[deobfNamespace]?.replace('/', '.') else null
+
+            if (obfClass == null || deobfClass == null) {
+                skippedClassCount++
+                continue
+            }
+
+            deobfToObfClassMap[deobfClass] = obfClass
+            deobfToObfClassMap[deobfClass.substringAfterLast('.')] = obfClass
+            if ('$' in deobfClass) {
+                deobfToObfClassMap[deobfClass.replace('$', '.')] = obfClass
+                deobfToObfClassMap[deobfClass.substringAfterLast('$')] = obfClass
+            }
+            obfToDeobfClassMap[obfClass] = deobfClass
+            if ('$' in obfClass) {
+                obfToDeobfClassMap[obfClass.replace('$', '.')] = deobfClass
+            }
+            val methodMap = deobfToObfMethodMap.getOrPut(deobfClass) { mutableMapOf() }
+            val obfMethodMap = obfToDeobfMethodMap.getOrPut(obfClass) { mutableMapOf() }
+            val arityIndex = deobfToObfMethodByArity.getOrPut(deobfClass) { mutableMapOf() }
+            val overloads = deobfMethodOverloads.getOrPut(deobfClass) { mutableMapOf() }
+
+            for (methodDef in classDef.methods) {
+                val methodNames = mutableListOf<String?>()
+                for (i in namespaces.indices) {
+                    val n = try {
+                        methodDef.getName(i)
+                    } catch (_: Exception) {
+                        null
+                    }
+                    methodNames.add(n)
+                }
+                val obfMethod = if (obfNamespace < methodNames.size) methodNames[obfNamespace] else null
+                val deobfMethod = if (deobfNamespace < methodNames.size) methodNames[deobfNamespace] else null
+                val obfDesc = try {
+                    methodDef.getDesc(obfNamespace)
+                } catch (_: Exception) {
+                    null
+                }
+                val deobfDesc = try {
+                    methodDef.getDesc(deobfNamespace)
+                } catch (_: Exception) {
+                    null
+                }
+                if (obfMethod != null && deobfMethod != null && obfDesc != null && deobfDesc != null) {
+                    val deobfKey = "$deobfMethod$deobfDesc"
+                    val obfKey = "$obfMethod$obfDesc"
+                    methodMap[deobfKey] = obfMethod
+                    obfMethodMap[obfKey] = deobfMethod
+                    val ar = countParams(deobfDesc)
+                    val byArity = arityIndex.getOrPut(deobfMethod) { mutableMapOf() }
+                    val prev = byArity.putIfAbsent(ar, obfMethod)
+                    if (prev != null && prev != obfMethod) byArity[ar] = ""
+                    overloads.getOrPut(deobfMethod) { mutableListOf() }.add(deobfDesc to obfMethod)
+                }
+            }
+
+            val fieldMap = deobfToObfFieldMap.getOrPut(deobfClass) { mutableMapOf() }
+            val obfFieldMap = obfToDeobfFieldMap.getOrPut(obfClass) { mutableMapOf() }
+            val fieldTypesForOwner = deobfFieldTypeMap.getOrPut(deobfClass) { mutableMapOf() }
+
+
+            for (fieldDef in classDef.fields) {
+                val obfDesc = runCatching { fieldDef.getDesc(obfNamespace) }.getOrNull()
+                val fieldNames = mutableListOf<String?>()
+                for (i in namespaces.indices) {
+                    val n = try {
+                        fieldDef.getName(i)
+                    } catch (_: Exception) {
+                        null
+                    }
+                    fieldNames.add(n)
+                }
+                val obfField = if (obfNamespace < fieldNames.size) fieldNames[obfNamespace] else null
+                val deobfField = if (deobfNamespace < fieldNames.size) fieldNames[deobfNamespace] else null
+
+                var namedType: String? = runCatching { fieldDef.getDesc(deobfNamespace) }.getOrNull()?.let { d ->
+                    jvmFieldDescToClassName(d)
+                }
+
+                if (namedType == null) {
+                    val obfDesc = runCatching { fieldDef.getDesc(obfNamespace) }.getOrNull()
+                    if (obfDesc != null) {
+                        val obfType =
+                            jvmFieldDescToClassName(obfDesc)
+                        if (obfType != null) {
+                            namedType =
+                                obfToDeobfClassMap[obfType]
+                                    ?: obfToDeobfClassMap[obfType.replace('$', '.')]
+                                            ?: obfToDeobfClassMap[obfType.replace(
+                                        '.',
+                                        '$'
+                                    )]
+                        }
+                    }
+                }
+
+                if (deobfField != null && namedType != null) {
+                    val canon = canonicalDeobfClass(namedType)
+                    fieldTypesForOwner[deobfField] = canon
+                    obfFieldTypeDeobfMap.getOrPut(obfClass) { mutableMapOf() }[obfField!!] = canon
+                }
+
+
+                if (obfField != null && deobfField != null) {
+                    fieldMap[deobfField] = obfField
+                    obfFieldMap[obfField] = deobfField
+                }
+
+                if (obfField != null && obfDesc != null) {
+                    obfFieldDescriptorMap.getOrPut(obfClass) { mutableMapOf() }[obfField] = obfDesc
+                }
+            }
+
+            classCount++
+        }
+    }
+
+    fun buildMappingsIfNeeded(
+        tree: net.fabricmc.loader.impl.lib.mappingio.tree.MappingTree,
+        obfNamespace: Int,
+        deobfNamespace: Int
+    ) {
+        if (!isDevEnvironment()) {
+            loadMappingsFromResource()
+        } else {
+            val mappingFile = getDevMappingFile()
+            if (!mappingFile.exists()) {
+                buildDeobfToObfMapFromTree(tree, obfNamespace, deobfNamespace)
+            } else {
+                loadMappingsFromResource()
+            }
+            saveMappingsToJson()
+        }
+    }
 
     fun extractKDocFromAnnotations(annotations: List<Annotation>): String? {
         return annotations

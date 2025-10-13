@@ -3,9 +3,7 @@ package net.liopyu.kotlinscript.util
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.mojang.logging.LogUtils
-import net.fabricmc.loader.api.FabricLoader
-import net.fabricmc.loader.impl.launch.FabricLauncherBase
-import net.fabricmc.loader.impl.lib.mappingio.tree.MappingTree
+
 import org.jetbrains.kotlin.cli.common.environment.setIdeaIoUseFallback
 import org.jetbrains.kotlin.cli.jvm.compiler.EnvironmentConfigFiles
 import org.jetbrains.kotlin.cli.jvm.compiler.KotlinCoreEnvironment
@@ -25,39 +23,7 @@ import java.io.InputStreamReader
 
 val instanceDir = File(System.getProperty("user.dir"))
 val sourcesDir = File(instanceDir, "kotlinsources")
-fun some() {
-    val tree = FabricLauncherBase.getLauncher().getMappingConfiguration().getMappings()
-    val namespaces = listOf(tree.srcNamespace) + tree.dstNamespaces
-    for (classDef in tree.classes) {
-        val names = mutableListOf<String?>()
-        for (i in namespaces.indices) {
-            val name = try {
-                classDef.getName(i)
-            } catch (e: Exception) {
-                null
-            }
-            names.add(name)
-        }
 
-        if (names.size > 1 && names[1] != null && names[1]!!.contains("Minecraft")) {
-            val intermediaryClass = names[0]?.replace('/', '.')
-            val namedClass = names[1]?.replace('/', '.')
-            for (methodDef in classDef.methods) {
-                val intermediaryMethod = try {
-                    methodDef.getName(0)
-                } catch (e: Exception) {
-                    null
-                }
-                val namedMethod = try {
-                    methodDef.getName(1)
-                } catch (e: Exception) {
-                    null
-                }
-
-            }
-        }
-    }
-}
 
 fun saveMappingsToJson() {
     val gson = Gson()
@@ -80,7 +46,6 @@ fun loadMappingsFromResource() {
     val resourcePath = "/mappings/mappings.json"
     val resourceStream = TestParser.Companion::class.java.getResourceAsStream(resourcePath)
     val url = TestParser.Companion::class.java.getResource(resourcePath)
-    logger.info("Trying to load resource as URL: $url")
     val gson = Gson()
     val mapType = object : TypeToken<Map<String, Any>>() {}.type
 
@@ -106,8 +71,6 @@ fun loadMappingsFromResource() {
     runCatching {
         parseMap<Map<String, Map<String, String>>>("deobfFieldTypeMap", methodMapType)
             .forEach { (k, v) -> deobfFieldTypeMap[k] = v.toMutableMap() }
-    }.onFailure {
-        logger.info("deobfFieldTypeMap missing in mappings.json (ok for legacy).")
     }
     deobfToObfClassMap.clear()
     deobfToObfClassMap.putAll(parseMap("deobfToObfClassMap", classMapType))
@@ -166,24 +129,6 @@ fun getDevMappingFile(): File {
     return mappingFile
 }
 
-
-fun buildMappingsIfNeeded(tree: MappingTree, obfNamespace: Int, deobfNamespace: Int) {
-    if (!isDevEnvironment()) {
-        loadMappingsFromResource()
-    } else {
-        val mappingFile = getDevMappingFile()
-        if (!mappingFile.exists()) {
-            buildDeobfToObfMapFromTree(tree, obfNamespace, deobfNamespace)
-        } else {
-            loadMappingsFromResource()
-        }
-        saveMappingsToJson()
-    }
-}
-
-fun isDevEnvironment(): Boolean {
-    return FabricLoader.getInstance().isDevelopmentEnvironment
-}
 
 private fun descToNamedTypeOrNull(desc: String): String? {
     var d = desc
@@ -838,6 +783,42 @@ fun findVariableTypes(ktFile: KtFile): Map<String, String> {
             val init = property.initializer ?: return
 
             when (init) {
+                is KtCallableReferenceExpression -> {
+                    // left side of `::`
+                    val lhs = init.receiverExpression
+                    // right side name: ::open
+                    val refName = (init.callableReference as? KtSimpleNameExpression)?.getReferencedName()
+
+                    // Derive arity from the declared function type if present: (A, B) -> R  => params size
+                    val declaredFtype = property.typeReference?.typeElement as? KtFunctionType
+                    val declaredArity = declaredFtype?.parameters?.size ?: 0
+
+                    // Resolve owner deobf from lhs
+                    val ownerDeobf: String? = when (lhs) {
+                        is KtNameReferenceExpression -> {
+                            val rn = lhs.getReferencedName()
+                            vars[rn] ?: fq(rn)
+                        }
+
+                        is KtCallExpression -> {
+                            // e.g., DebugWandHelper()::open
+                            resolveCtorType(lhs, importSimple)?.let(::canonicalDeobfClass)
+                        }
+
+                        else -> null
+                    }?.let { normalizeOwnerForLookup(it, importSimple) }
+
+                    val ret = if (ownerDeobf != null && refName != null) {
+                        // No args passed here; hints = empty; use declaredArity for safety
+                        strongPickOnOwner(ownerDeobf, refName, declaredArity, emptyList()).retDeobf
+                    } else null
+
+                    putVar(
+                        property.name,
+                        ret ?: "kotlin.Unit"
+                    ) // callable-ref to function returning Unit should stay Unit
+                }
+
                 is KtCallExpression -> {
                     val callee = init.calleeExpression
                     if (callee is KtNameReferenceExpression || callee is KtDotQualifiedExpression) {
@@ -921,140 +902,6 @@ val obfToDeobfFieldMap: MutableMap<String, MutableMap<String, String>> = mutable
 val obfFieldTypeDeobfMap: MutableMap<String, MutableMap<String, String>> = mutableMapOf()
 val obfFieldDescriptorMap: MutableMap<String, MutableMap<String, String>> = mutableMapOf()
 
-fun buildDeobfToObfMapFromTree(tree: MappingTree, obfNamespace: Int, deobfNamespace: Int) {
-    val namespaces = listOf(tree.srcNamespace) + tree.dstNamespaces
-    var classCount = 0
-    var skippedClassCount = 0
-
-    for (classDef in tree.classes) {
-        val names = mutableListOf<String?>()
-        for (i in namespaces.indices) {
-            val name = try {
-                classDef.getName(i)
-            } catch (_: Exception) {
-                null
-            }
-            names.add(name)
-        }
-
-        val obfClass = if (obfNamespace < names.size) names[obfNamespace]?.replace('/', '.') else null
-        val deobfClass = if (deobfNamespace < names.size) names[deobfNamespace]?.replace('/', '.') else null
-
-        if (obfClass == null || deobfClass == null) {
-            skippedClassCount++
-            continue
-        }
-
-        deobfToObfClassMap[deobfClass] = obfClass
-        deobfToObfClassMap[deobfClass.substringAfterLast('.')] = obfClass
-        if ('$' in deobfClass) {
-            deobfToObfClassMap[deobfClass.replace('$', '.')] = obfClass
-            deobfToObfClassMap[deobfClass.substringAfterLast('$')] = obfClass
-        }
-        obfToDeobfClassMap[obfClass] = deobfClass
-        if ('$' in obfClass) {
-            obfToDeobfClassMap[obfClass.replace('$', '.')] = deobfClass
-        }
-        val methodMap = deobfToObfMethodMap.getOrPut(deobfClass) { mutableMapOf() }
-        val obfMethodMap = obfToDeobfMethodMap.getOrPut(obfClass) { mutableMapOf() }
-        val arityIndex = deobfToObfMethodByArity.getOrPut(deobfClass) { mutableMapOf() }
-        val overloads = deobfMethodOverloads.getOrPut(deobfClass) { mutableMapOf() }
-
-        for (methodDef in classDef.methods) {
-            val methodNames = mutableListOf<String?>()
-            for (i in namespaces.indices) {
-                val n = try {
-                    methodDef.getName(i)
-                } catch (_: Exception) {
-                    null
-                }
-                methodNames.add(n)
-            }
-            val obfMethod = if (obfNamespace < methodNames.size) methodNames[obfNamespace] else null
-            val deobfMethod = if (deobfNamespace < methodNames.size) methodNames[deobfNamespace] else null
-            val obfDesc = try {
-                methodDef.getDesc(obfNamespace)
-            } catch (_: Exception) {
-                null
-            }
-            val deobfDesc = try {
-                methodDef.getDesc(deobfNamespace)
-            } catch (_: Exception) {
-                null
-            }
-            if (obfMethod != null && deobfMethod != null && obfDesc != null && deobfDesc != null) {
-                val deobfKey = "$deobfMethod$deobfDesc"
-                val obfKey = "$obfMethod$obfDesc"
-                methodMap[deobfKey] = obfMethod
-                obfMethodMap[obfKey] = deobfMethod
-                val ar = countParams(deobfDesc)
-                val byArity = arityIndex.getOrPut(deobfMethod) { mutableMapOf() }
-                val prev = byArity.putIfAbsent(ar, obfMethod)
-                if (prev != null && prev != obfMethod) byArity[ar] = ""
-                overloads.getOrPut(deobfMethod) { mutableListOf() }.add(deobfDesc to obfMethod)
-            }
-        }
-
-        val fieldMap = deobfToObfFieldMap.getOrPut(deobfClass) { mutableMapOf() }
-        val obfFieldMap = obfToDeobfFieldMap.getOrPut(obfClass) { mutableMapOf() }
-        val fieldTypesForOwner = deobfFieldTypeMap.getOrPut(deobfClass) { mutableMapOf() }
-
-
-        for (fieldDef in classDef.fields) {
-            val obfDesc = runCatching { fieldDef.getDesc(obfNamespace) }.getOrNull()
-            val fieldNames = mutableListOf<String?>()
-            for (i in namespaces.indices) {
-                val n = try {
-                    fieldDef.getName(i)
-                } catch (_: Exception) {
-                    null
-                }
-                fieldNames.add(n)
-            }
-            val obfField = if (obfNamespace < fieldNames.size) fieldNames[obfNamespace] else null
-            val deobfField = if (deobfNamespace < fieldNames.size) fieldNames[deobfNamespace] else null
-
-            var namedType: String? = runCatching { fieldDef.getDesc(deobfNamespace) }.getOrNull()?.let { d ->
-                jvmFieldDescToClassName(d)
-            }
-
-            if (namedType == null) {
-                val obfDesc = runCatching { fieldDef.getDesc(obfNamespace) }.getOrNull()
-                if (obfDesc != null) {
-                    val obfType =
-                        jvmFieldDescToClassName(obfDesc)
-                    if (obfType != null) {
-                        namedType =
-                            obfToDeobfClassMap[obfType]
-                                ?: obfToDeobfClassMap[obfType.replace('$', '.')]
-                                        ?: obfToDeobfClassMap[obfType.replace(
-                                    '.',
-                                    '$'
-                                )]
-                    }
-                }
-            }
-
-            if (deobfField != null && namedType != null) {
-                val canon = canonicalDeobfClass(namedType)
-                fieldTypesForOwner[deobfField] = canon
-                obfFieldTypeDeobfMap.getOrPut(obfClass) { mutableMapOf() }[obfField!!] = canon
-            }
-
-
-            if (obfField != null && deobfField != null) {
-                fieldMap[deobfField] = obfField
-                obfFieldMap[obfField] = deobfField
-            }
-
-            if (obfField != null && obfDesc != null) {
-                obfFieldDescriptorMap.getOrPut(obfClass) { mutableMapOf() }[obfField] = obfDesc
-            }
-        }
-
-        classCount++
-    }
-}
 
 data class StrongPick(val obfName: String?, val retDeobf: String?)
 
@@ -1477,7 +1324,7 @@ fun findQualifiedClassUsages(ktFile: KtFile): Map<String, String> {
 }
 
 
-private fun canonicalDeobfClass(name: String): String {
+fun canonicalDeobfClass(name: String): String {
     if (deobfToObfClassMap.containsKey(name)) return name
 
     val dotted = name.replace('$', '.')
@@ -1613,7 +1460,7 @@ fun resolveObfMethodName(className: String, methodName: String, args: List<Strin
 
 val deobfToObfMethodByArity: MutableMap<String, MutableMap<String, MutableMap<Int, String>>> = mutableMapOf()
 val deobfFieldTypeMap: MutableMap<String, MutableMap<String, String>> = mutableMapOf()
-private fun jvmFieldDescToClassName(desc: String): String? {
+fun jvmFieldDescToClassName(desc: String): String? {
     var i = 0
     while (i < desc.length && desc[i] == '[') i++
     return if (i < desc.length && desc[i] == 'L') {
@@ -1623,7 +1470,7 @@ private fun jvmFieldDescToClassName(desc: String): String? {
 }
 
 
-private fun countParams(desc: String): Int {
+fun countParams(desc: String): Int {
     var i = desc.indexOf('(') + 1
     var c = 0
     while (i < desc.length && desc[i] != ')') {
@@ -2440,11 +2287,6 @@ fun collectMethodCallRewritesByLine(ktFile: KtFile, source: String): Map<Int, Li
             val arity = hints.size
             val line = offsetToLine(expr.textRange.startOffset)
 
-            logger.info(
-                "[KS-pick] recv='${dot.receiverExpression.text}' ownerRaw='$ownerRaw' ownerCanon='$ownerCanon' ownerObf='${ownerObf ?: "-"}' " +
-                        "meth=$methodName arity=$arity rawHints=$hints normHints=$normHints"
-            )
-
             val ownersForLookup = buildList {
                 add(ownerCanon)
                 addAll(classClosureDeobf(ownerCanon))
@@ -2478,7 +2320,6 @@ fun collectMethodCallRewritesByLine(ktFile: KtFile, source: String): Map<Int, Li
                         ) ?: strong
                     } else strong
                     out.getOrPut(line) { mutableListOf() }.add(methodName to finalObf)
-                    logger.info("[KS-pick]  strongPick -> '$strong' (final='$finalObf')")
                     return
                 }
             }
@@ -2509,9 +2350,6 @@ fun collectMethodCallRewritesByLine(ktFile: KtFile, source: String): Map<Int, Li
                         ) ?: obf2
                     } else obf2
                     out.getOrPut(line) { mutableListOf() }.add(methodName to finalObf)
-                    val candDbg = candPairs.map { (d, o) -> "$d:$o" }
-                    logger.info("[KS-pick]  candidates=$candDbg")
-                    logger.info("[KS-pick]  -> chose obf='$finalObf' for $ownerCanon.$methodName($normHints)")
                     return
                 }
             }
@@ -2522,13 +2360,11 @@ fun collectMethodCallRewritesByLine(ktFile: KtFile, source: String): Map<Int, Li
                         reflectionPickOverload(ownerCanon, methodName, candPairs, argExprs, env, importSimpleNameMap)
                     if (!picked.isNullOrEmpty()) {
                         out.getOrPut(line) { mutableListOf() }.add(methodName to picked)
-                        logger.info("[KS-pick]  -> reflection chose obf='$picked' for $ownerCanon.$methodName")
                         return
                     }
                 }
             }
 
-            logger.warn("[KS-pick]  FAILED to pick for $ownerCanon.$methodName arity=$arity; hints=$normHints; recv='${dot.receiverExpression.text}'")
         }
 
 

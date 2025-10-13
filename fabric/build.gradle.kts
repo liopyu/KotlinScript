@@ -27,7 +27,9 @@ sourceSets {
         }
     }
 }
-
+kotlin {
+    jvmToolchain(21)
+}
 repositories {
     maven(url = "${rootProject.projectDir}/deps")
     mavenLocal()
@@ -50,8 +52,6 @@ dependencies {
     modApi(libs.fabric.api)
     modApi(libs.bundles.fabric)
     implementation("net.fabricmc:fabric-fernflower:2.0.0")
-
-
     modCompileOnly(libs.bundles.fabric.integrations.compileOnly) {
         isTransitive = false
     }
@@ -138,11 +138,10 @@ tasks {
 tasks.register<DefaultTask>("exportLoomMappings") {
     group = "fabric"
     description = "Export the Loom mappings (Tiny format) to the build directory"
-
     doLast {
-        val loom = project.extensions.getByName("loom") as LoomGradleExtensionAPI
+        val loom = extensions.getByType(LoomGradleExtensionAPI::class.java)
         val mappingsFile = loom.mappingsFile
-        val outFile = file("$buildDir/loom-mappings.tiny")
+        val outFile = layout.buildDirectory.file("loom-mappings.tiny").get().asFile
         outFile.parentFile.mkdirs()
         Files.copy(mappingsFile.toPath(), outFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
         println("Exported Loom mappings to: ${outFile.absolutePath}")

@@ -6,7 +6,9 @@ plugins {
     id("org.jetbrains.gradle.plugin.idea-ext")
     id("net.nemerosa.versioning") version "3.1.0"
 }
-
+kotlin {
+    jvmToolchain(21)
+}
 architectury {
     common("neoforge", "fabric")
 }
@@ -17,39 +19,28 @@ repositories {
     maven(url = "https://maven.neoforged.net/releases")
     mavenLocal()
 }
-
 dependencies {
     implementation(libs.bundles.kotlin)
-    modImplementation(libs.fabric.loader)
-    /*modApi(libs.molang)*/
 
-    // Integrations
+    modCompileOnly(libs.fabric.loader)
+
     compileOnlyApi(libs.jei.api)
     modCompileOnly(libs.bundles.fabric.integrations.compileOnly) {
         isTransitive = false
     }
-    // Flywheel has no common dep so just pick one and don't use any platform specific code in common
-    // modCompileOnly(libs.flywheelFabric)
-    /*implementation("org.jetbrains.kotlin:kotlin-scripting-jsr223:2.0.21")
-    implementation("org.jetbrains.kotlin:kotlin-script-util:1.8.22")*/
-    implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.0.21")
 
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.1")
+    implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.0.21")
+    compileOnly("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
     implementation("org.jetbrains.kotlin:kotlin-scripting-common:2.0.21")
     implementation("org.jetbrains.kotlin:kotlin-scripting-jvm:2.0.21")
     implementation("org.jetbrains.kotlin:kotlin-scripting-jvm-host:2.0.21")
-    /* implementation("org.jetbrains.kotlin:kotlin-scripting-dependencies:2.0.21")
-     implementation("org.jetbrains.kotlin:kotlin-scripting-dependencies-maven:2.0.21")*/
-    implementation("net.fabricmc:mapping-io:0.5.0")
-    // Showdown
-    modCompileOnly(libs.graal)
 
-    // Data Storage
+    modCompileOnly(libs.graal)
     modCompileOnly(libs.bundles.mongo)
 
-    // Unit Testing
     testImplementation(libs.bundles.unitTesting)
 }
+
 
 tasks.withType<Test> {
     useJUnitPlatform()

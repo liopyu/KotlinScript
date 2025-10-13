@@ -15,6 +15,9 @@ object KotlinScriptInit {
             logger.info(i)
     }
 
+    fun preInitialize() {
+        KotlinScriptLoader.loadScripts()
+    }
 
     private val importCache = ConcurrentHashMap<String, Boolean>()
     private val executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors())
@@ -57,9 +60,6 @@ object KotlinScriptInit {
     }
 
 
-    fun preInitialize() {
-        KotlinScriptLoader.loadScripts()
-    }
 }
 
 

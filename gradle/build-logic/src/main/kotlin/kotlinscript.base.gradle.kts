@@ -1,6 +1,3 @@
-
-
-import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import utilities.ACCESS_WIDENER
 
 plugins {
@@ -52,10 +49,10 @@ tasks {
         options.release.set(21)
         options.compilerArgs.add("-Xlint:-processing,-classfile,-serial")
     }
-
-    withType<KotlinCompile> {
-        kotlinOptions.jvmTarget = "21"
-    }
+    /*
+        withType<KotlinCompile> {
+            kotlinOptions.jvmTarget = "21"
+        }*/
 
     withType<Jar> {
         from(rootProject.file("LICENSE"))
