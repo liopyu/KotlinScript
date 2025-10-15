@@ -1,24 +1,14 @@
-package net.liopyu.kotlinscript;
+package net.liopyu.kotlinscript
 
-val MODID: String = "kotlinscript";
+import net.neoforged.fml.common.Mod
+import org.apache.logging.log4j.LogManager
 
-//@Mod("kotlinscript")
-class KotlinScriptNeoKS {
+@Mod("kotlinscript")
+object KotlinScriptNeo {
+    private val logger = LogManager.getLogger("kotlinscript")
+
     init {
-        ensure()
-        try {
-            KotlinScriptInit.preInitialize()
-        } catch (t: Throwable) {
-            t.printStackTrace()
-            throw t
-        }
-
-    }
-
-    fun ensure() {
-        val k = "net.liopyu.kotlinscript.shadow.java.stdlib.jar"
-        if (System.getProperty(k) != null) return
-        val url = kotlin.KotlinVersion::class.java.protectionDomain.codeSource.location
-        if (url != null) System.setProperty(k, java.nio.file.Paths.get(url.toURI()).toString())
+        logger.info("Loading kotlinscript")
+        KotlinScriptInit.preInitialize()
     }
 }

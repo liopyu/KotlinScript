@@ -1,5 +1,5 @@
-modLoader = "javafml" #mandatory
-loaderVersion = "[4,)" #mandatory This is typically bumped every Minecraft version by Forge. See our download page for lists of versions.
+modLoader = "kotlinforforge" #mandatory
+loaderVersion = "[5.6,)" #mandatory This is typically bumped every Minecraft version by Forge. See our download page for lists of versions.
 license = "GNU-3"
 issueTrackerURL = ""
 

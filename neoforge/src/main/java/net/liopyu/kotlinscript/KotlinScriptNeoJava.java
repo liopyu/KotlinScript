@@ -1,7 +1,5 @@
 package net.liopyu.kotlinscript;
 
-import kotlin.KotlinVersion;
-import net.neoforged.fml.common.Mod;
 
 import java.io.File;
 import java.io.IOException;
@@ -15,12 +13,12 @@ import java.nio.file.StandardOpenOption;
 import java.util.jar.JarOutputStream;
 import java.util.zip.ZipEntry;
 
-@Mod("kotlinscript")
-public class KotlinScriptNeo {
-    public KotlinScriptNeo() {
+
+public class KotlinScriptNeoJava {
+    public KotlinScriptNeoJava() {
         ensureStdlib();
         ensureKotlinJarsOnDiskAndSetProps();
-        ClassLoader cl = KotlinScriptNeo.class.getClassLoader();
+        ClassLoader cl = KotlinScriptNeoJava.class.getClassLoader();
         ClassLoader prev = Thread.currentThread().getContextClassLoader();
         Thread.currentThread().setContextClassLoader(cl);
         try {
@@ -31,13 +29,13 @@ public class KotlinScriptNeo {
     }
 
     private void ensureStdlib() {
-        String k = "kotlin.java.stdlib.jar";
+   /*     String k = "kotlin.java.stdlib.jar";
         if (System.getProperty(k) != null) return;
         try {
             var url = kotlin.KotlinVersion.class.getProtectionDomain().getCodeSource().getLocation();
             if (url != null) System.setProperty(k, java.nio.file.Paths.get(url.toURI()).toString());
         } catch (Exception ignored) {
-        }
+        }*/
     }
 
     private static void ensureKotlinJarsOnDiskAndSetProps() {
