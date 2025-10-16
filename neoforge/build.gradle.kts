@@ -25,8 +25,15 @@ val kotlinVersion = "2.0.21"
 
 dependencies {
     neoForge(libs.neoforge)
-    implementation(project(":common", configuration = "namedElements")) { isTransitive = false }
-    "developmentNeoForge"(project(":common", configuration = "namedElements")) { isTransitive = false }
+
+
+    implementation(project(":common", configuration = "namedElements")) {
+        isTransitive = false
+    }
+    bundle(project(path = ":common", configuration = "transformProductionNeoForge")) {
+        isTransitive = false
+    }
+    testImplementation(project(":common", configuration = "namedElements"))
     compileOnly("org.jetbrains.kotlin:kotlin-compiler-embeddable:$kotlinVersion")
     compileOnly("org.jetbrains.kotlin:kotlin-scripting-common:$kotlinVersion")
     compileOnly("org.jetbrains.kotlin:kotlin-scripting-compiler-embeddable:$kotlinVersion")
@@ -100,13 +107,20 @@ sanitizedJars.forEach { t ->
 }
 
 val commonJarInput by configurations.creating
-dependencies {
+/*dependencies {
     add("commonJarInput", project(path = ":common", configuration = "transformProductionNeoForge")) {
         isTransitive = false
     }
-}
+}*/
 
 tasks {
+    shadowJar {
+        exclude("architectury-common.accessWidener")
+        exclude("architectury.common.json")
+
+        relocate("com.ibm.icu", "net.liopyu.kotlinscript.ibm.icu")
+    }
+
     val jarJarTask = getByName("jarJar")
     jar {
         dependsOn(jarJarTask)
@@ -141,6 +155,10 @@ tasks {
             )
         }
     }
+
+}
+
+tasks {
     sourcesJar {
         val depSources = project(":common").tasks.sourcesJar
         duplicatesStrategy = DuplicatesStrategy.EXCLUDE
@@ -150,3 +168,9 @@ tasks {
         }
     }
 }
+/*
+tasks.remapJar {
+    atAccessWideners.add("kotlin-common.accesswidener")
+}
+*/
+

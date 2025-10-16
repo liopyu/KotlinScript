@@ -17,12 +17,11 @@ import java.util.zip.ZipEntry;
 public class KotlinScriptNeoJava {
     public KotlinScriptNeoJava() {
         ensureStdlib();
-        ensureKotlinJarsOnDiskAndSetProps();
         ClassLoader cl = KotlinScriptNeoJava.class.getClassLoader();
         ClassLoader prev = Thread.currentThread().getContextClassLoader();
         Thread.currentThread().setContextClassLoader(cl);
         try {
-            KotlinScriptLoader.loadScripts();
+            //   KotlinScriptLoader.loadScripts();
         } finally {
             Thread.currentThread().setContextClassLoader(prev);
         }
@@ -38,54 +37,4 @@ public class KotlinScriptNeoJava {
         }*/
     }
 
-    private static void ensureKotlinJarsOnDiskAndSetProps() {
-        if (System.getProperty("kotlin.compiler.jar") != null) return;
-        try {
-            URL loc = net.liopyu.kotlinscript.KS.class.getProtectionDomain().getCodeSource().getLocation();
-            Path jarPath;
-            if (loc == null) return;
-            if (!"file".equalsIgnoreCase(loc.getProtocol())) {
-                jarPath = dumpUrlToTempJar(loc, "kotlinscript-kotlin-rt");
-            } else {
-                Path p = Paths.get(loc.toURI());
-                jarPath = Files.isRegularFile(p) ? p : zipDirToTempJar(p, "kotlinscript-kotlin-rt");
-            }
-            String path = jarPath.toAbsolutePath().toString();
-            String base = new File(System.getProperty("user.dir"), "config/kotlinscript/jij-cache").getAbsolutePath();
-            System.setProperty("kotlin.home", base);
-            System.setProperty("kotlin.compiler.jar", path);
-            System.setProperty("kotlin.java.stdlib.jar", path);
-            System.setProperty("kotlin.java.reflect.jar", path);
-            System.setProperty("kotlin.script.runtime.jar", path);
-        } catch (Exception ignored) {
-        }
-    }
-
-    private static Path dumpUrlToTempJar(URL url, String prefix) throws IOException {
-        Path tmp = Files.createTempFile(prefix, ".jar");
-        tmp.toFile().deleteOnExit();
-        try (InputStream in = url.openStream();
-             OutputStream out = Files.newOutputStream(tmp, StandardOpenOption.TRUNCATE_EXISTING)) {
-            in.transferTo(out);
-        }
-        return tmp;
-    }
-
-    private static Path zipDirToTempJar(Path dir, String prefix) throws IOException {
-        Path tmp = Files.createTempFile(prefix, ".jar");
-        tmp.toFile().deleteOnExit();
-        try (JarOutputStream jos = new JarOutputStream(Files.newOutputStream(tmp))) {
-            Files.walk(dir).forEach(p -> {
-                try {
-                    if (Files.isDirectory(p)) return;
-                    String rel = dir.relativize(p).toString().replace(File.separatorChar, '/');
-                    jos.putNextEntry(new ZipEntry(rel));
-                    Files.copy(p, jos);
-                    jos.closeEntry();
-                } catch (IOException ignored) {
-                }
-            });
-        }
-        return tmp;
-    }
 }
