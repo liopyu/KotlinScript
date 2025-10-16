@@ -26,14 +26,9 @@ val kotlinVersion = "2.0.21"
 dependencies {
     neoForge(libs.neoforge)
 
-
-    implementation(project(":common", configuration = "namedElements")) {
-        isTransitive = false
-    }
-    bundle(project(path = ":common", configuration = "transformProductionNeoForge")) {
-        isTransitive = false
-    }
+    implementation(project(":common", configuration = "namedElements")) { isTransitive = false }
     testImplementation(project(":common", configuration = "namedElements"))
+
     compileOnly("org.jetbrains.kotlin:kotlin-compiler-embeddable:$kotlinVersion")
     compileOnly("org.jetbrains.kotlin:kotlin-scripting-common:$kotlinVersion")
     compileOnly("org.jetbrains.kotlin:kotlin-scripting-compiler-embeddable:$kotlinVersion")
@@ -70,19 +65,19 @@ val kotlinEmbeds = listOf(
     "org.jetbrains.kotlin:kotlin-scripting-jvm:$kotlinVersion",
     "org.jetbrains.kotlin:kotlin-scripting-jvm-host:$kotlinVersion"
 )
-
 val sanitizedDir = layout.buildDirectory.dir("jarjar-sanitized")
 
 val sanitizedJars = kotlinEmbeds.map { gav ->
-    val parts = gav.split(":")
-    val module = parts[1]
-    val ver = parts[2]
+    val (group, module, ver) = gav.split(":")
     val taskName = "sanitize_${module}_${ver}".replace('-', '_').replace('.', '_')
+
     val dep = dependencies.create(gav) as ExternalModuleDependency
     dep.isTransitive = false
     val cfg = configurations.detachedConfiguration(dep).apply { isTransitive = false }
+
     tasks.register<Jar>(taskName) {
         val inFile = providers.provider { cfg.resolve().single() }
+
         from(inFile.map { zipTree(it) })
         exclude(
             "org/jetbrains/kotlin/native/**",
@@ -94,11 +89,25 @@ val sanitizedJars = kotlinEmbeds.map { gav ->
             "kotlin/native/**",
             "module-info.class"
         )
+
         archiveBaseName.set(module)
         archiveVersion.set(ver)
         destinationDirectory.set(sanitizedDir)
+        isPreserveFileTimestamps = false
+        isReproducibleFileOrder = true
         duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-        manifest { attributes("Automatic-Module-Name" to module.replace('-', '.') + ".sanitized") }
+
+        val originalMf = inFile.map {
+            zipTree(it).matching { include("META-INF/MANIFEST.MF") }.singleFile
+        }
+
+        manifest {
+            from(originalMf)
+            attributes(
+                "Automatic-Module-Name" to module.replace('-', '.'),
+                "Multi-Release" to "true"
+            )
+        }
     }
 }
 
@@ -106,45 +115,39 @@ sanitizedJars.forEach { t ->
     dependencies.add("jarJar", files(t.flatMap { it.archiveFile }))
 }
 
+
 val commonJarInput by configurations.creating
-/*dependencies {
+dependencies {
     add("commonJarInput", project(path = ":common", configuration = "transformProductionNeoForge")) {
         isTransitive = false
     }
-}*/
+}
 
 tasks {
-    shadowJar {
-        exclude("architectury-common.accessWidener")
-        exclude("architectury.common.json")
-
-        relocate("com.ibm.icu", "net.liopyu.kotlinscript.ibm.icu")
-    }
-
     val jarJarTask = getByName("jarJar")
+
     jar {
         dependsOn(jarJarTask)
         from(jarJarTask)
-        from({ commonJarInput.resolve().map { zipTree(it) } })
+        from({ commonJarInput.resolve().map { zipTree(it) } }) {
+            exclude("architectury.accessWidener")
+            exclude("architectury.common.json")
+            exclude("net/liopyu/kotlinscript/KSKt.class")
+        }
         duplicatesStrategy = DuplicatesStrategy.EXCLUDE
         exclude(
-            "LICENSE",
-            "LICENSE*",
-            "NOTICE",
-            "NOTICE*",
-            "META-INF/LICENSE*",
-            "META-INF/NOTICE*",
-            "META-INF/INDEX.LIST",
-            "module-info.class"
+            "LICENSE", "LICENSE*", "NOTICE", "NOTICE*",
+            "META-INF/LICENSE*", "META-INF/NOTICE*",
+            "META-INF/INDEX.LIST", "module-info.class"
         )
-        manifest {
-            attributes["FMLModType"] = "MOD"
-        }
+        manifest { attributes["FMLModType"] = "MOD" }
     }
+
     remapJar {
         dependsOn(jar)
         inputFile.set(jar.flatMap { it.archiveFile })
     }
+
     processResources {
         inputs.property("version", rootProject.version)
         inputs.property("minecraft_version", rootProject.property("mc_version").toString())
@@ -156,9 +159,6 @@ tasks {
         }
     }
 
-}
-
-tasks {
     sourcesJar {
         val depSources = project(":common").tasks.sourcesJar
         duplicatesStrategy = DuplicatesStrategy.EXCLUDE
@@ -168,9 +168,3 @@ tasks {
         }
     }
 }
-/*
-tasks.remapJar {
-    atAccessWideners.add("kotlin-common.accesswidener")
-}
-*/
-
