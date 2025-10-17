@@ -9,6 +9,14 @@ object KotlinScriptNeo {
 
     init {
         logger.info("Loading kotlinscript")
-        KotlinScriptInit.preInitialize()
+        //val loader = KotlinCompilerBootstrap.loader
+        //LogUtils.getLogger().info("Bootstrapped Kotlin: kotlin.home=${System.getProperty("kotlin.home")}")
+
+
+        try {
+            KotlinScriptInit.preInitialize()
+        } catch (e: Exception) {
+            logger.error(e.message)
+        }
     }
 }

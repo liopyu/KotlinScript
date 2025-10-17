@@ -16,6 +16,7 @@ object KotlinScriptInit {
     }
 
     fun preInitialize() {
+
         KotlinScriptLoader.loadScripts()
     }
 

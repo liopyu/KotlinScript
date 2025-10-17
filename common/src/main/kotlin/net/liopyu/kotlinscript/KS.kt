@@ -1,7 +1,5 @@
 package net.liopyu.kotlinscript
 
-import com.mojang.logging.LogUtils
-import net.liopyu.kotlinscript.util.TestParser
 import java.io.File
 import java.net.URLClassLoader
 import kotlin.script.experimental.api.*
@@ -50,10 +48,6 @@ data class KS(val scriptFile: File) {
     }
 
     fun eval(context: Map<String, Any> = emptyMap()): ResultWithDiagnostics<EvaluationResult> {
-        val obfScript = TestParser.main(
-            scriptFile.absoluteFile.readText().trimIndent()
-        )
-
         val config = sharedEvalConfig.with {
             providedProperties(context)
         }
@@ -62,9 +56,8 @@ data class KS(val scriptFile: File) {
                 set(providedProperties, context.mapValues { KotlinType(it.value::class) })
             }
         }
-        LogUtils.getLogger().info("Obfuscated Script: ${obfScript}")
         return BasicJvmScriptingHost().eval(
-            obfScript.toScriptSource(),
+            scriptFile.absoluteFile.toScriptSource(),
             compilationConfig,
             config
         )

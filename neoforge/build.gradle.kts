@@ -1,7 +1,6 @@
 plugins {
     id("kotlinscript.platform")
     id("kotlinscript.publish")
-    id("net.neoforged.moddev") version "2.0.78"
 }
 
 architectury {
@@ -23,124 +22,73 @@ repositories {
 
 val kotlinVersion = "2.0.21"
 
+val embeddedLibs by configurations.creating
+val commonJarInput by configurations.creating
+
 dependencies {
     neoForge(libs.neoforge)
+    implementation(libs.neo.kotlin.forge)
 
     implementation(project(":common", configuration = "namedElements")) { isTransitive = false }
-    testImplementation(project(":common", configuration = "namedElements"))
+    "developmentNeoForge"(project(":common", configuration = "namedElements")) { isTransitive = false }
 
-    compileOnly("org.jetbrains.kotlin:kotlin-compiler-embeddable:$kotlinVersion")
-    compileOnly("org.jetbrains.kotlin:kotlin-scripting-common:$kotlinVersion")
-    compileOnly("org.jetbrains.kotlin:kotlin-scripting-compiler-embeddable:$kotlinVersion")
-    compileOnly("org.jetbrains.kotlin:kotlin-scripting-compiler-impl-embeddable:$kotlinVersion")
-    compileOnly("org.jetbrains.kotlin:kotlin-scripting-jvm:$kotlinVersion")
-    compileOnly("org.jetbrains.kotlin:kotlin-scripting-jvm-host:$kotlinVersion")
-}
-
-listOf("runtimeClasspath", "compileClasspath").forEach { cfg ->
-    configurations.named(cfg) {
-        exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-core")
-        exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-core-jvm")
-        exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-debug")
-        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
-        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib-jdk8")
-        exclude(group = "org.jetbrains.kotlin", module = "kotlin-reflect")
-    }
-}
-
-configurations.named("jarJar") {
-    exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-core")
-    exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-core-jvm")
-    exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-debug")
-    exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
-    exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib-jdk8")
-    exclude(group = "org.jetbrains.kotlin", module = "kotlin-reflect")
-}
-
-val kotlinEmbeds = listOf(
-    "org.jetbrains.kotlin:kotlin-compiler-embeddable:$kotlinVersion",
-    "org.jetbrains.kotlin:kotlin-scripting-common:$kotlinVersion",
-    "org.jetbrains.kotlin:kotlin-scripting-compiler-embeddable:$kotlinVersion",
-    "org.jetbrains.kotlin:kotlin-scripting-compiler-impl-embeddable:$kotlinVersion",
-    "org.jetbrains.kotlin:kotlin-scripting-jvm:$kotlinVersion",
-    "org.jetbrains.kotlin:kotlin-scripting-jvm-host:$kotlinVersion"
-)
-val sanitizedDir = layout.buildDirectory.dir("jarjar-sanitized")
-
-val sanitizedJars = kotlinEmbeds.map { gav ->
-    val (group, module, ver) = gav.split(":")
-    val taskName = "sanitize_${module}_${ver}".replace('-', '_').replace('.', '_')
-
-    val dep = dependencies.create(gav) as ExternalModuleDependency
-    dep.isTransitive = false
-    val cfg = configurations.detachedConfiguration(dep).apply { isTransitive = false }
-
-    tasks.register<Jar>(taskName) {
-        val inFile = providers.provider { cfg.resolve().single() }
-
-        from(inFile.map { zipTree(it) })
-        exclude(
-            "org/jetbrains/kotlin/native/**",
-            "org/jetbrains/kotlin/konan/**",
-            "org/jetbrains/kotlin/cli/konan/**",
-            "org/jetbrains/kotlin/resolve/native/**",
-            "org/jetbrains/kotlin/incremental/native/**",
-            "org/jetbrains/kotlin/fir/**/native/**",
-            "kotlin/native/**",
-            "module-info.class"
-        )
-
-        archiveBaseName.set(module)
-        archiveVersion.set(ver)
-        destinationDirectory.set(sanitizedDir)
-        isPreserveFileTimestamps = false
-        isReproducibleFileOrder = true
-        duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-
-        val originalMf = inFile.map {
-            zipTree(it).matching { include("META-INF/MANIFEST.MF") }.singleFile
-        }
-
-        manifest {
-            from(originalMf)
-            attributes(
-                "Automatic-Module-Name" to module.replace('-', '.'),
-                "Multi-Release" to "true"
-            )
-        }
-    }
-}
-
-sanitizedJars.forEach { t ->
-    dependencies.add("jarJar", files(t.flatMap { it.archiveFile }))
-}
-
-
-val commonJarInput by configurations.creating
-dependencies {
     add("commonJarInput", project(path = ":common", configuration = "transformProductionNeoForge")) {
         isTransitive = false
+    }
+
+    bundle(project(path = ":common", configuration = "transformProductionNeoForge")) { isTransitive = false }
+
+    listOf(
+        "org.jetbrains.kotlin:kotlin-compiler-embeddable:$kotlinVersion",
+        "org.jetbrains.kotlin:kotlin-scripting-common:$kotlinVersion",
+        "org.jetbrains.kotlin:kotlin-scripting-jvm:$kotlinVersion",
+        "org.jetbrains.kotlin:kotlin-scripting-jvm-host:$kotlinVersion",
+        "org.jetbrains.kotlin:kotlin-scripting-dependencies",
+        "org.jetbrains.kotlin:kotlin-scripting-dependencies-maven",
+        "io.github.classgraph:classgraph:4.8.149",
+        kotlin("script-runtime"),
+        libs.graal
+    ).forEach {
+        val dep = when (it) {
+            is Provider<*> -> it
+            else -> dependencies.create(it.toString()).also { d ->
+                (d as? ExternalModuleDependency)?.isTransitive = false
+            }
+        }
+        add(embeddedLibs.name, dep)
     }
 }
 
 tasks {
-    val jarJarTask = getByName("jarJar")
-
     jar {
-        dependsOn(jarJarTask)
-        from(jarJarTask)
-        from({ commonJarInput.resolve().map { zipTree(it) } }) {
-            exclude("architectury.accessWidener")
-            exclude("architectury.common.json")
-            exclude("net/liopyu/kotlinscript/KSKt.class")
-        }
         duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-        exclude(
-            "LICENSE", "LICENSE*", "NOTICE", "NOTICE*",
-            "META-INF/LICENSE*", "META-INF/NOTICE*",
-            "META-INF/INDEX.LIST", "module-info.class"
-        )
         manifest { attributes["FMLModType"] = "MOD" }
+
+        from({ commonJarInput.resolve().map { zipTree(it) } }) {
+            exclude("architectury.accessWidener", "architectury.common.json")
+        }
+
+        from({ embeddedLibs.resolve().map { zipTree(it) } }) {
+            exclude(
+                "META-INF/*.SF",
+                "META-INF/*.DSA",
+                "META-INF/*.RSA",
+                "META-INF/INDEX.LIST",
+                "module-info.class"
+            )
+            includeEmptyDirs = false
+            eachFile {
+                val dot = path.replace('/', '.')
+                val drop =
+                    dot.startsWith("org.jetbrains.kotlin.native.") ||
+                            dot.startsWith("org.jetbrains.kotlin.konan.") ||
+                            dot.startsWith("org.jetbrains.kotlin.cli.konan.") ||
+                            dot.startsWith("org.jetbrains.kotlin.resolve.native.") ||
+                            dot.startsWith("org.jetbrains.kotlin.incremental.native.") ||
+                            dot.contains(".native.")
+                if (drop) exclude()
+            }
+        }
     }
 
     remapJar {
